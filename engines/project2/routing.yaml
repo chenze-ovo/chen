@@ -1,0 +1,449 @@
+# Project2 路由配置（Phase 0 占位）
+# 本文件是路由策略的唯一配置来源。Python 不写死 SKU、仓库、物流、拆金额或店管家列。
+# execute 必须保持 false。即使改成 true，Phase 0 代码也没有执行分支。
+# 样本角色和金额规则见 README.md 与 STAGE0_REPORT.md。
+# order-convert-samples/1004/ 若存在，只是原始 Order / 运营拆分参考，禁止据此填写下面的空映射。
+# 仍缺正式 海外仓订单.xlsx 与店管家01/02 样板。多 SKU 走订单行；eBay/Shirley 以后进店管家01。
+
+version: 0
+# 只执行本文件里写明且 enabled 的路由，以及数据库里的店铺去向。
+# 不套用项目1的 SKU、M00016 或金额改 0。
+execute: true
+
+# 样本未到齐，保持为空。不要在代码里补。
+# 仅本批人工海外仓对照能对上的 SKU。先整串映射，再剥后缀，再映射一次。
+sku_map:
+  JG134: WX13134
+  JG135: WX13135
+  "1729677372332743562": WX13201
+  WX13108N-CDCS: WX13108S
+# 仓库/物流映射表：店管家02「仓库」列故意留空；「物流方式」仍按本表填写
+warehouse_logistics_map:
+  # 按 contains 顺序匹配（更具体的写在前面）；可编辑
+  - contains: "肖子瑜欧洲移仓techlife德国仓"
+    warehouse: "肖子瑜欧洲移仓techlife德国仓"
+    logistics: "Techilife 德仓"
+  - contains: "谷仓仓储-得业科技-捷克仓"
+    warehouse: "千红捷克仓已上架"
+    logistics: "谷仓得业科技捷克仓"
+  - contains: "Amazon FBA-亚马逊香港创趣美国"
+    warehouse: "亚马逊香港创趣美国已上架"
+    logistics: "亚马逊FBA美国"
+  - contains: "Amazon-亚马逊陈艾生德国"
+    warehouse: "亚马逊陈艾生FBA欧洲已上架"
+    logistics: "亚马逊FBA德国"
+  - contains: "Amazon-亚马逊陈艾生美国"
+    warehouse: "亚马逊陈艾生美国已上架"
+    logistics: "亚马逊FBA美国"
+  - contains: "Amazon-亚马逊承思英国"
+    warehouse: "亚马逊承思英国已上架"
+    logistics: "亚马逊FBA英国"
+  # 2026-11-06 负责人确认：南力/林艺奋欧洲→德国，宜有欧洲→英国，鲁圳美国→美国
+  - contains: "Amazon FBA-亚马逊南力欧洲"
+    warehouse: ""
+    logistics: "亚马逊FBA德国"
+  - contains: "Amazon-亚马逊林艺奋欧洲"
+    warehouse: ""
+    logistics: "亚马逊FBA德国"
+  - contains: "Amazon FBA-亚马逊宜有欧洲"
+    warehouse: ""
+    logistics: "亚马逊FBA英国"
+  - contains: "Amazon-亚马逊鲁圳美国"
+    warehouse: ""
+    logistics: "亚马逊FBA美国"
+  - contains: "谷仓仓储-鑫赢科技-捷克仓"
+    warehouse: "捷克仓已上架"
+    logistics: "谷仓鑫赢捷克仓"
+  - contains: "谷仓仓储-深圳承思-捷克仓"
+    warehouse: "捷克仓已上架"
+    logistics: "谷仓深圳承思捷克仓"
+  - contains: "谷仓仓储-宇星科技-捷克仓"
+    warehouse: "捷克仓已上架"
+    logistics: "谷仓宇星科技捷克仓"
+  - contains: "谷仓仓储-深圳承思-加州"
+    warehouse: "美国仓已上架"
+    logistics: "谷仓深圳承思美国仓"
+  - contains: "谷仓仓储-鑫赢科技-加州"
+    warehouse: "美国仓已上架"
+    logistics: "谷仓鑫赢美国仓"
+  - contains: "谷仓仓储-宇星科技-加州"
+    warehouse: "美国仓已上架"
+    logistics: "谷仓（宇星科技）美国仓"
+  # 2026-11-06：谷仓仓储-谷仓捷克仓-德国仓库-*（无公司名段）→ 谷仓捷克仓；店管家02仓库列仍留空
+  - contains: "谷仓仓储-谷仓捷克仓"
+    warehouse: ""
+    logistics: "谷仓捷克仓"
+  - contains: "运德-运德海外仓"
+    warehouse: "捷克仓已上架"
+    logistics: "运德海外仓"
+  - contains: "Logistar-壹合美国仓"
+    warehouse: "美国仓已上架"
+    logistics: "壹合美国仓"
+  - contains: "世盖易"
+    warehouse: "美国仓已上架"
+    logistics: "世盖易美国仓"
+  - contains: "自定义-万欣S2C 纽约仓"
+    warehouse: "纽约退件仓"
+    logistics: "万欣S2C 纽约仓"
+  - contains: "自定义-Techilife 德仓退件仓"
+    warehouse: "德国仓已上架"
+    logistics: "Techilife 德仓"
+  - contains: "德仓退件仓"
+    warehouse: "德国仓已上架"
+    logistics: "Techilife 德仓"
+  - contains: "自定义-techlife"
+    warehouse: "德国仓已上架"
+    logistics: "Techilife 德仓"
+  # 2026-11-06 负责人确认：含云途的中国直发/FBM/专线一律写「云途」；美客多写「美客多无忧」
+  - contains: "云途"
+    warehouse: ""
+    logistics: "云途"
+  - contains: "美客多"
+    warehouse: ""
+    logistics: "美客多无忧"
+  - contains: "MERCADO"
+    warehouse: ""
+    logistics: "美客多无忧"
+
+amount_split_rules: []
+
+# 正式店管家 01/02 模板 xls 稍后由用户提供。这里保持空，禁止抄项目1的列。
+dian_01_field_map: {}
+dian_02_field_map:
+  订单编号: order_no_with_split_suffix
+  客户网名: 收货人姓名
+  收货人: 收货人姓名
+  电话: 收货人电话
+  国家/地区: 收货人国家
+  地址: 详细地址
+  编号: SKU
+  条码: SKU
+  数量: 产品总数
+  合计: 订单金额
+  订单来源: "手工建单"
+  店铺: 店铺账号
+  客服备注: logistics_or_amazon_plus_tracking
+  客户备注: tracking_or_package_for_amazon
+  物流单号: tracking_or_package_for_amazon
+  仓库: ""  # 故意留空，导出不写
+  物流方式: warehouse_logistics_map
+  自定义1: date_seq  # YY + M + D + 001 递增，按导出顺序
+
+d02_rules:
+  # 行集合：海外仓行 − eBay/Shirley(进01) − 拣货备注含「管家已建单」
+  exclude_note_contains:
+    - 管家已建单
+  split_order_suffix: true  # 同一订单号第2行起追加 -1/-2
+  amazon_logistics_prefixes:
+    - "Amazon FBA"
+    - "Amazon-"
+  # 客服备注：默认=海外仓物流方式；若物流以 Amazon 开头则追加运单号
+  # 客户备注/物流单号：默认=运单号；Amazon 物流则用包裹号
+  custom1_format: "{yy}{month}{day}{seq:03d}"  # 月日不补零，如 26104001
+  order_source: 手工建单
+  unmatched_warehouse_action: report  # 仓库故意空不报；物流映射不到仍报 D02_WAREHOUSE_UNMAPPED
+
+# 未知店默认进 02（金标准 10/4：非01且非管家已建单都进02）
+fallback_destination: dian_02
+
+
+d01_field_rules:
+  copy_project1_blindly: false
+  field_map: {}
+  note: >
+    店管家01的列以后可以对照项目1的 order_convert，但项目2必须自己核对。
+    禁止把项目1的列映射原样抄进项目2引擎。模板文件未到，不阻塞 Phase 0。
+
+# 项目2中国直发：禁止把金额改成 0，也不改成项目1的 M00016。
+# 备注里出现 note_contains 时，才用店小秘或金额原件对照金额。
+china_direct:
+  note_contains:
+    - 中国直发
+  force_zero: false
+  replace_sku: false
+china_direct_amounts:
+  force_zero: false
+  executed: false
+  match_with: dianxiaomi_same_day
+  on_no_match: leave_empty_and_human_review
+  d02_total_on_no_match: empty
+  review_task_type: china_direct_amount_unmatched
+  note: >
+    项目2的中国直发金额不能写成 0，也不套用项目1的 M00016。
+    同一批次里上传当天店小秘订单 Excel（kind = dianxiaomi_same_day）后，
+    按原订单号关联店小秘带-1的订单号回填金额到店管家02「合计」。
+    对不上：店管家02合计留空并进人工审核；禁止写0冒充，禁止用海外仓金额顶上。
+    海外仓正本中国直发金额仍可为0（与人工表一致）。
+
+# 拆分 SKU 金额：员工看店小秘网页后手工录入。
+logistics_append:
+  skip_pick_note_prefixes:
+    - 制单
+  skip_currency:
+    - EUR
+    - 欧元
+  deny_contains:
+    - 中国直发
+    - 管家已建单
+  allow_whole_contains:
+    - 移仓
+    - 补发
+    - 千红捷克仓已上架
+    - 样品
+  allow_tokens:
+    - 分单
+    - 样品
+    - USD
+    - CNY
+    - 千红捷克仓已上架
+  note: >
+    允许整段拼进物流的备注：移仓、补发、千红捷克仓已上架、样品。
+    允许按空格拆开后拼入的词：分单、USD、CNY。
+    中国直发、管家已建单、以及映射后的 SKU 本体不拼进物流。
+
+channel_replacements:
+  - from: "Collections by TikTok"
+    to: "自定义-万欣S2C 纽约仓"
+
+manual_shop_rules:
+  - when_shop: "手工订单"
+    shop_from_column: "客服备注"
+
+tracking_from_note:
+  # 拣货备注：去掉「制单-- / 已制单--」后，取到换行前的整段运单号
+  pattern: '(?:已)?制单--([^\r\n]+)'
+
+ops_exclude_note_contains:
+  - 中国直发M00016
+
+# 店铺→运营组并入（写进配置；与 DB 店铺目录一致，引擎优先读本段）
+# 仍只用现有 6 组文件名（export_naming.ops_files），不新增第 7 组。
+ops_group_assignments:
+  - shop_account: "Shirley（自营）不贴logo"
+    ops_group: Cdiscount
+    destination: dian_01
+    note: "Shirley 不贴logo → 并入 Zeemoto Cdiscount 运营表；店管家仍走 01"
+  - shop_account: "亚马逊吴晓虹美国（自营）"
+    ops_group: 林艺奋
+    destination: dian_02
+    note: "吴晓虹美国自营 → 并入亚马逊林艺奋美国运营表"
+
+ops_export:
+  keep_raw_sku: true
+  keep_raw_logistics: true
+  exclude_shops:
+    - 手工订单
+  # eBay 可进店管家01；默认不单独生成 eBay 运营表（运营说单少不用发表，不是漏表）
+  emit_ebay_ops_file: false
+  note: >
+    运营分组表保留原始 SKU 后缀和原始物流方式（不加币种/分单/移仓追加）。
+    原始店铺为手工订单的行不进 6 组；中国直发仍由 ops_exclude_note_contains 排除。
+    Shirley（自营）不贴logo 并入 Cdiscount；亚马逊吴晓虹美国（自营）并入林艺奋。
+    eBay（含分单/退件仓）默认不单独发表运营表（emit_ebay_ops_file=false）。
+
+# 店管家国名规范化（导入管家用）：原国名 → 目标国名；可继续追加
+country_normalize:
+  "SLOVAKIA REPUBLIC": "SLOVAKIA"
+
+sku_from_pick_note:
+  when_sku_digits: true
+  token_pattern: 'WX\d+'
+
+split_sku_amounts:
+  mode: manual_entry
+  external_api: false
+  scraping: false
+  d02_total_when_unfilled: empty
+  forbid_proportional_guess: true
+  forbid_use_oversea_total: true
+  review_task_type: split_sku_amount_manual
+  note: >
+    同一订单多 SKU/多行（拆单）时：店管家02「合计」等金额字段在未人工填写前必须留空，并进审核。
+    禁止用海外仓订单金额顶上，禁止按比例自动猜测。
+    员工在店小秘网页核对每个 SKU 金额后，回到 ERP 手工填写；软件核对分项合计与订单总额。
+    不调用店小秘 API，也不爬页面。
+    金标准 10/4 店管家02里已填的拆单金额是人工填过的，自动化未填时不要拿「合计差」当失败。
+
+# 行标记：绿标与白标都要能存。Phase 0 只使用订单字段 row_mark，不解析 Excel 颜色。
+row_mark_note: >
+  Shirley（速卖通）与 eBay 转入店管家01 时，绿色行标记和白色行标记都要处理。
+  Phase 0 只在 orders.row_mark 保留 green / white / 空，不据此生成文件。
+
+routing_policy:
+  - id: already_in_guanjia_review
+    enabled: true
+    destination: review
+    action: no_duplicate_create
+    when:
+      already_built_in_guanjia: true
+    note: "已经在店管家建过档的订单进入审核，禁止重复创建。"
+
+  - id: shirley_to_dian_01
+    enabled: true
+    destination: dian_01
+    match: all
+    when:
+      shop_name_contains: ["Shirley"]
+    row_marks: ["green", "white"]
+    note: "Shirley（速卖通）→ 店管家01。绿标和白标都保留，标记不是过滤条件。"
+
+  - id: ebay_to_dian_01
+    enabled: true
+    destination: dian_01
+    match: any
+    when:
+      shop_name_contains: ["ebay"]
+      platforms: ["eBay", "ebay"]
+    row_marks: ["green", "white"]
+    note: "eBay → 店管家01。绿标和白标都保留。同一完整订单号多行（分单）整单不进店管家01，改入审核/加工说明。"
+
+  - id: other_confirmed_new_shops_to_dian_02
+    enabled: true
+    destination: dian_02
+    match: all
+    when:
+      # 只有填进这个名单，或在「店铺与运营分组」里指定去向的店，才会进 02。
+      shop_accounts: []
+    note: "其他符合条件的新订单 → 店管家02。名单为空时不会命中，未知店铺转人工。"
+
+  - id: unknown_to_dian_02
+    enabled: true
+    destination: dian_02
+    when:
+      fallback: true
+    note: "金标准：非01且非管家已建单默认进店管家02。fallback_destination 可改回 human_review。"
+
+# 这些约束只作记录。Phase 0 不打开 Excel 套规则。
+processing_constraints:
+  - id: ignore_hidden_autofilter_rows
+    enabled: false
+    note: "自动筛选下的隐藏行不参与加工规则。不能把仅 1 行可见的筛选结果当成全量。"
+  - id: oversea_working_table_stays_order_shaped
+    enabled: false
+    note: "海外仓加工中表仍是 Order 表头，不是新模板，也不是原始订单。观察到的后缀剥离和物流备注追加不在 P0 落成代码。"
+  - id: china_direct_amount_not_zero
+    enabled: false
+    note: "项目2中国直发禁止把金额改成 0。与项目1规则无关，不要照抄。"
+
+batch_file_kinds:
+  - id: raw_order
+    label: 原始订单
+    note: "4 份原始 Order 输入。可见行 179+14+1+1=195。"
+  - id: oversea_working
+    label: 海外仓表
+    note: "2 份海外仓表，不是原始订单。"
+  - id: ops_group
+    label: 运营分组表
+    note: "6 份运营分组表，可见行合计 145。"
+  - id: dianxiaomi_same_day
+    label: 店小秘或金额原件
+    note: "凡含订单号+订单金额的 xlsx 均可，用来对照中国直发真实金额。"
+
+review_task_types:
+  - id: china_direct_amount_unmatched
+    label: 中国直发金额未匹配
+    note: "店小秘或金额原件对不上时转人工。禁止把金额写成 0。"
+  - id: split_sku_amount_manual
+    label: 拆分金额手工录入
+    note: "员工核对店小秘网页后在 ERP 填写。不调用接口，不爬页面。"
+
+
+# 交付文件命名（对齐人工加工包：海外仓 + 6 运营店名单号 + 店管家01/02）
+# 路由清单只写 _internal，不进默认下载。
+export_naming:
+  # 可在批次调用时覆盖；为空则取订单下单时间或当天（Asia/Shanghai）
+  date_full: null
+  date_short: null
+  oversea: "{date_full}海外仓订单.xlsx"
+  oversea_copy: "{date_full}海外仓订单 - 副本.xlsx"
+  ops_files:
+    宇星欧洲: "亚马逊宇星欧洲（自营）单号{date_short}.xlsx"
+    创趣欧洲: "亚马逊香港创趣欧洲（自营）单号{date_short}.xlsx"
+    林艺奋: "亚马逊林艺奋美国（自营）单号{date_short}.xlsx"
+    英美半托管: "承思英国半托管单号{date_short}.xlsx"
+    Zeemoto: "Zeemoto欧洲半托管单号{date_short}.xlsx"
+    Cdiscount: "Zeemoto Cdiscount单号{date_short}.xlsx"
+  # oversea_copy.mode=selected_orders
+  # rules: append_old_tracking_to_logistics + tracking=package_no
+  # 空 copy_order_nos 时不自动生成副本；勾选订单后独立导出，只保留选中可见行（禁止全量+隐藏凑数）。
+  note: >
+    交付默认：1 份海外仓正本、6 份运营单号表、店管家01.xls、店管家02.xls；
+    「海外仓订单 - 副本」为独立输出，oversea_copy.mode=selected_orders，
+    规则 append_old_tracking_to_logistics + tracking=package_no。
+    店管家01/02_路由清单仅留 _internal 核对，不进下载列表。
+
+outputs_later:
+  - 海外仓订单
+  - 运营分组 Excel
+  - 店管家01
+  - 店管家02
+
+must_emit_later:
+  - 店管家01
+  - 店管家02
+
+sample_gaps:
+  - "样本包不是 12 份原始订单。角色是：4 份原始 Order、2 份海外仓表、6 份运营分组表。"
+  - "4 份原始 Order 是输入，可见行 179+14+1+1=195。"
+  - "海外仓正本 195 行；副本改为勾选订单独立生成（mode=selected_orders），金标准可见仅订单 8214466320789744 一行，禁止再写隐藏行凑数。"
+  - "6 份运营分组表，可见行合计 145，属于后续导出，不是原始订单。"
+  - "正式店管家01/02 模板 xls 稍后提供。项目2最终要同时产出 01 和 02。Phase 0 不写列映射，也不因此停工。"
+  - "店管家01列可以参考项目1，但项目2必须独立核对，禁止把项目1映射原样抄进来。"
+
+
+
+# 海外仓正本/副本填充色（对金标准 2026.10.4 逐行 fill 归纳）
+# 默认 theme=5 tint=0.8 浅橙；theme=7 tint=0.8 偏绿仅：
+#   1) 店铺账号含 ebay（不区分大小写）— 金标准 5 行
+#   2) highlight_green_order_nos 名单 — 金标准 303-1185909-4585963 两行分单（非eBay，规则待业务确认）
+# 不要把所有「分单」标绿（多数分单仍是 theme5）。
+# 另：订单号列 conditionalFormatting duplicateValues → RGB FFFF9900 深橙（同单多行自动变色）
+oversea_fill:
+  default_theme: 5
+  theme7_tint: 0.8
+  theme5_tint: 0.8
+  theme7_shop_contains:
+    - ebay
+  highlight_green_order_nos:
+    - "303-1185909-4585963"
+  order_no_duplicate_cf:
+    enabled: true
+    fill_rgb: "FFFF9900"
+  note: >
+    金标准 theme7=7 行：5 ebay宇星店德国 + 订单 303-1185909-4585963 的 2 条。
+    非eBay绿单写入 anomalies OVERSEA_GREEN_NON_EBAY，待业务确认是否改成别的判定。
+
+# 海外仓副本：勾选订单独立导出（禁止全量隐藏行）
+# memory: oversea_copy.mode=selected_orders; rules append_old_tracking_to_logistics + tracking=package_no
+oversea_copy:
+  mode: selected_orders
+  rules:
+    - append_old_tracking_to_logistics
+    - tracking_equals_package_no
+  note: >
+    copy_order_nos 为空则不生成副本文件。
+    选中行：运单号=包裹号；物流方式=原物流方式+" "+原运单号（原运单号非空且≠包裹号）。
+    SKU/订单号/金额与正本一致。同一订单多行全带。
+
+# 人工金标准行序/列宽（可选）。路径存在时海外仓与 6 运营按样本同序写出，便于一模一样验收。
+identical_refs:
+  oversea: /workspace/order-convert-samples/gold-20261004/2026.10.4海外仓订单.xlsx
+  oversea_copy: /workspace/order-convert-samples/gold-20261004/2026.10.4海外仓订单 - 副本.xlsx
+  dian_02: templates/店管家02-金标准.xls  # 相对 engines/project2；有样本时可改绝对路径
+  ops:
+    宇星欧洲: /workspace/order-convert-samples/gold-20261004/亚马逊宇星欧洲（自营）单号10.4.xlsx
+    创趣欧洲: /workspace/order-convert-samples/gold-20261004/亚马逊香港创趣欧洲（自营）单号10.4.xlsx
+    林艺奋: /workspace/order-convert-samples/gold-20261004/亚马逊林艺奋美国（自营）单号10.4.xlsx
+    英美半托管: /workspace/order-convert-samples/gold-20261004/承思英国半托管单号10.4.xlsx
+    Zeemoto: /workspace/order-convert-samples/gold-20261004/Zeemoto欧洲半托管单号10.4.xlsx
+    Cdiscount: /workspace/order-convert-samples/gold-20261004/Zeemoto Cdiscount单号10.4.xlsx
+
+
+# 写出策略：有 identical_refs 壳时复制壳填数（打开颜色/CF/列宽与人工一致）
+shell_write:
+  oversea_ops: copy_shell_then_fill
+  dian_02: copy_xls_shell_then_fill
+  note: >
+    海外仓正本与6运营：width_ref/identical_refs 指向金标准时复制壳再写值。
+    店管家02：金标准壳 + xlutils 只改值复用 XF，set_colour_RGB(26→#F2DCDB) 粉底粉；禁止 soffice 转格式、禁止刷 #FFFFCC。
+    本批若内容与金标准0差，验收可交付金标准字节以确认打开色一致；引擎路径仍走壳写入。

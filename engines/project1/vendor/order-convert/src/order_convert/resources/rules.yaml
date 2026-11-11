@@ -1,0 +1,110 @@
+# 订单转换规则配置（可扩展店铺 / SKU 后缀 / 物流相关常量）
+
+china_direct:
+  # 仅当原始「拣货备注」包含以下完整文字时命中（不看物流方式）
+  pick_note_marker: "中国直发M00016 海外仓发产品"
+  sku: "M00016"
+  # 店小秘物流：原物流 + 该固定文案（无空格）
+  # 店管家02客服备注：原物流 + 一个空格 + 该固定文案
+  order_no_suffix: "-1"
+  d02_amount_zero: true
+
+# SKU 来源优先级（见 transform.transform_sku）：
+#   1) 中国直发：拣货备注含完整 pick_note_marker → 输出固定 sku（M00016），不被下条覆盖
+#   2) 非多SKU：按 sku_from_note_columns 优先级扫描备注列，整格「像 SKU」则替换输出 SKU；
+#      先命中列优先；替换后再去 -后缀；备注列保持原文；记 SKU_FROM_NOTE（info，含 source_column）
+#   3) 否则：去 -后缀 / 日本标签（japan）等现有逻辑
+#   4) 对输出基础 SKU 应用 sku_aliases（如 M00007→M0007）
+#   5) 再应用 sku_prefix_rules（如 WXM… → 去 WX 得 M…；WX+数字不动）
+#   多行 SKU（换行）：待复核 MULTI_SKU，不用单个备注 SKU 覆盖多行
+sku_from_note_columns:
+  - 拣货备注
+  - 客服备注
+  - 订单备注
+
+# 币种接到物流文案后（店小秘物流方式 / 店管家02客服备注）；欧元除外
+currency:
+  append_to_logistics: true
+  # 候选表头，按顺序取第一个存在于原表的列
+  columns:
+    - 币种缩写
+    - 币种
+  # 这些币种不追加（大小写不敏感；中文名一并排除）
+  skip:
+    - EUR
+    - 欧元
+
+sku_suffixes:
+  # 白名单：删除「-后缀」得到基础 SKU（可多段从右迭代剥离，如 18MB-020-QHDE-FBM → 18MB-020）
+  strip:
+    - LYF
+    - XYTU
+    - QHDE
+    - FBM
+  # 日本特殊：后缀 + 拣货备注关键字 → 店小秘追加备注，02 仅基础 SKU
+  japan:
+    suffix: LYFJP
+    note_contains: "贴日本标签"
+
+# SKU 别名：去后缀 / 拣货备注替换 / 日本标签 之后，对最终基础 SKU（及多行每一行）做精确替换
+# 仅配置表中的条目；不要擅自做「多余 0 全删」之类泛化
+# 中国直发固定 sku（M00016）不在此表中，不会被改写
+sku_aliases:
+  M00007: M0007
+
+# SKU 前缀规则：在去后缀 / 备注替换 / 日本标签 / sku_aliases 之后，对基础 SKU（及多行每一行）应用
+# when_starts_with 命中则去掉 strip_prefix（例：WXM0021 → M0021；WX10225 因不以 WXM 开头而不动）
+# 中国直发固定 M00016 不以 WXM 开头，不会被改写
+sku_prefix_rules:
+  - when_starts_with: "WXM"
+    strip_prefix: "WX"
+
+# 基础 SKU（去后缀/别名后）命中时：店小秘物流方式 / 店管家02客服备注 后追加该标记（无空格）
+# 店管家02「物流方式」列仍用 d02_fixed；中国直发优先，不与本规则叠加以标记替换 SKU
+sku_append_to_logistics:
+  - QDX
+
+shops:
+  amazon_keyword: "亚马逊"
+  # 进入店管家01 的已知非亚马逊店铺（子串匹配，大小写不敏感）
+  d01_known:
+    - ebay
+    - Shirley
+  # 未知店铺 → PENDING，禁止静默写入 01/02
+
+ebay:
+  # 仅 eBay 店铺：订单号按 "-" 取最后一段作为 01「原始单号」
+  truncate_order_no: true
+
+d02_fixed:
+  订单来源: "手工建单"
+  物流方式: "云途"
+
+d02_red_columns:
+  - 订单编号
+  - 客户网名
+  - 收货人
+  - 电话
+  - 国家/地区
+  - 地址
+  - 客服备注
+  - 客户备注
+  - 编号
+  - 条码
+  - 数量
+  - 合计
+  - 订单来源
+  - 店铺
+
+# 店小秘：亚马逊整行红色
+dianxiaomi_red_font_rgb: "FFFF0000"
+
+sort:
+  # 使用原始「物流方式」整串拼音（pypinyin Style.NORMAL）+ 原表相对行序
+  method: pinyin_raw_logistics
+
+phone:
+  # 仅对需要填写电话的目标（店管家02）做缺失检查
+  # 电话空且手机非空：不自动回退，记 PHONE_FALLBACK_UNCONFIRMED（仅 D02）
+  auto_fallback_to_mobile: false
+  warn_only_for_dest: D02
