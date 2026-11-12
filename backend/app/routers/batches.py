@@ -157,6 +157,9 @@ async def create_batch(
                 path = (item.get("outputs") or {}).get(key)
                 if path:
                     downloads.append({"label": f"{item.get('file')} · {label}", "path": path})
+            notes = (item.get("outputs") or {}).get("notes") or item.get("notes_path")
+            if notes:
+                downloads.append({"label": "异常说明", "path": notes, "kind": "notes"})
             export_status = item.get("export_status")
             if export_status in {"blocked", "needs_review", "error"}:
                 db.add(

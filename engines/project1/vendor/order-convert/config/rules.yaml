@@ -8,6 +8,7 @@ china_direct:
   # 店管家02客服备注：原物流 + 一个空格 + 该固定文案
   order_no_suffix: "-1"
   d02_amount_zero: true
+  # 输出基础 SKU 等于本 sku（M00016）时，店小秘「产品总数」和店管家02「数量」强制为 1；不报错、不阻断
 
 # SKU 来源优先级（见 transform.transform_sku）：
 #   1) 中国直发：拣货备注含完整 pick_note_marker → 输出固定 sku（M00016），不被下条覆盖
@@ -22,7 +23,10 @@ sku_from_note_columns:
   - 客服备注
   - 订单备注
 
-# 币种接到物流文案后（店小秘物流方式 / 店管家02客服备注）；欧元除外
+# 币种接到物流文案后（店小秘物流方式 / 店管家02客服备注）
+# 仅当店铺账号含 shops.amazon_keyword（默认「亚马逊」）时追加；Shirley、eBay 及其它非亚马逊店铺不追加
+# 不按字体颜色判断，按店铺是否亚马逊
+# 欧元（EUR/欧元）仍不追加；QDX/QDD 等 sku_append_to_logistics 标记不受本规则影响
 currency:
   append_to_logistics: true
   # 候选表头，按顺序取第一个存在于原表的列
@@ -61,8 +65,10 @@ sku_prefix_rules:
 
 # 基础 SKU（去后缀/别名后）命中时：店小秘物流方式 / 店管家02客服备注 后追加该标记（无空格）
 # 店管家02「物流方式」列仍用 d02_fixed；中国直发优先，不与本规则叠加以标记替换 SKU
+# QDD 与 QDX 同类：基础 SKU=QDD（含去后缀后）时无空格追加 QDD
 sku_append_to_logistics:
   - QDX
+  - QDD
 
 shops:
   amazon_keyword: "亚马逊"

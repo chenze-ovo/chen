@@ -112,8 +112,10 @@ def raw_currency(raw: dict, rules: Rules) -> str:
 
 
 def currency_suffix_for_logistics(raw: dict, rules: Rules) -> str:
-    """非欧元等 skip 币种时返回要追加的原文；否则空串。"""
+    """仅亚马逊店铺追加非欧元等 skip 币种；非亚马逊返回空串。"""
     if not rules.currency_append_to_logistics:
+        return ""
+    if not is_amazon(raw, rules):
         return ""
     cur = raw_currency(raw, rules)
     if not cur:
@@ -427,7 +429,7 @@ def should_append_sku_to_logistics(base_sku: str, rules: Rules) -> str | None:
 
 
 def _append_currency(text: str, raw: dict, rules: Rules) -> str:
-    """在业务后缀之后无空格追加币种（欧元等 skip 不追加）。"""
+    """在业务后缀之后无空格追加币种（仅亚马逊；欧元等 skip 不追加）。"""
     suf = currency_suffix_for_logistics(raw, rules)
     if not suf:
         return text
