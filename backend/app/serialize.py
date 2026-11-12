@@ -108,6 +108,61 @@ def order_detail(order: Order) -> dict:
     return body
 
 
+
+_INFO_ISSUE_TYPES = frozenset(
+    {
+        "SKU_FROM_NOTE",
+        "SKU_STRIP_PREFIX",
+        "SKU_STRIP_WXM_PREFIX",
+        "D02_ORDER_NO_DEDUP",
+    }
+)
+
+
+def _is_info_issue(item: dict) -> bool:
+    typ = str(item.get("type") or item.get("code") or "")
+    severity = str(item.get("severity") or "").lower()
+    return typ in _INFO_ISSUE_TYPES or severity == "info"
+
+
+def batch_exception_count(batch: ImportBatch) -> int:
+    """给列表页一个轻量异常数，不改也不回传整份 summary 的结构。"""
+    summary = batch.engine_summary or {}
+    if batch.project == "project1":
+        listed = 0
+        seen: set[tuple] = set()
+        counted = 0
+        for item in summary.get("files") or []:
+            counted += int(item.get("error_count") or 0) + int(item.get("warning_count") or 0)
+            buckets = list(item.get("errors") or []) + list(item.get("warnings") or [])
+            file_name = str(item.get("file") or "")
+            for raw in buckets:
+                if not isinstance(raw, dict):
+                    key = (file_name, "", str(raw))
+                else:
+                    if _is_info_issue(raw):
+                        continue
+                    key = (
+                        file_name,
+                        str(raw.get("订单号") or raw.get("order_no") or ""),
+                        str(raw.get("type") or raw.get("code") or ""),
+                        str(raw.get("suffix") or raw.get("SKU") or raw.get("店铺账号") or raw.get("message") or ""),
+                    )
+                if key in seen:
+                    continue
+                seen.add(key)
+                listed += 1
+        if listed:
+            return max(listed, counted) if counted > listed else listed
+        return counted
+    stats = summary.get("stats") or {}
+    if stats.get("human_review") not in (None, ""):
+        return int(stats.get("human_review") or 0)
+    if stats.get("review") not in (None, ""):
+        return int(stats.get("review") or 0)
+    anomalies = summary.get("anomalies") or []
+    return len(anomalies)
+
 def batch_detail(batch: ImportBatch) -> dict:
     creator = batch.creator
     return {
@@ -117,6 +172,7 @@ def batch_detail(batch: ImportBatch) -> dict:
         "note": batch.note,
         "engine_status": batch.engine_status,
         "engine_summary": batch.engine_summary,
+        "exception_count": batch_exception_count(batch),
         "created_by": creator.username if creator is not None else None,
         "created_at": iso(batch.created_at),
         "files": [

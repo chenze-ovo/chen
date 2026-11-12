@@ -120,6 +120,9 @@ def convert_order_file(
             dx_log = transform_logistics_dx(raw, rules, base_sku)
 
             qty = parse_quantity(raw, anomalies)
+            # 输出基础 SKU 为中国直发 sku（M00016）时，数量一律改为 1；不报错、不阻断
+            if base_sku == rules.china_sku:
+                qty = 1
             amt = d02_amount(raw, rules, anomalies)
             sku_lines = split_sku_lines(raw.get("SKU"))
             is_multi = len(sku_lines) > 1 and not is_china_direct(raw, rules)

@@ -20,7 +20,14 @@ from app.config import get_settings
 from app.database import get_db
 from app.deps import get_current_user, require_roles
 from app.models import BATCH_FILE_KINDS, BatchFile, EngineRun, ExceptionReview, ImportBatch, User, utcnow
-from app.services.project1_runner import aggregate_status, build_downloads, convert_files, project1_status
+from app.services.project1_runner import (
+    aggregate_status,
+    build_downloads,
+    collect_visible_issues,
+    convert_files,
+    count_visible_issues,
+    project1_status,
+)
 
 router = APIRouter(prefix="/api/project1", tags=["project1"])
 
@@ -77,7 +84,7 @@ def _download_paths(summary: dict | None) -> set[str]:
         elif isinstance(value, list):
             for item in value:
                 walk(item)
-        elif isinstance(value, str) and value.endswith((".xlsx", ".xlsm", ".xls", ".csv")):
+        elif isinstance(value, str) and value.endswith((".xlsx", ".xlsm", ".xls", ".csv", ".txt")):
             found.add(value)
 
     walk(summary or {})
@@ -243,24 +250,31 @@ def result(
     if batch.project != "project1":
         raise HTTPException(status_code=400, detail="仅项目1批次")
 
+    settings = get_settings()
     summary = batch.engine_summary or {}
     files_preview = []
     for item in summary.get("files", []):
+        hydrated = _hydrate_file_issues(item, settings.data_dir, batch.id)
         files_preview.append(
             {
-                "file": item.get("file"),
-                "export_status": item.get("export_status"),
-                "stats": item.get("stats") or {},
-                "error_count": item.get("error_count", 0),
-                "warning_count": item.get("warning_count", 0),
-                "errors": item.get("errors") or [],
-                "warnings": item.get("warnings") or [],
-                "anomalies": item.get("anomalies") or [],
-                "outputs": item.get("outputs") or {},
-                "message": item.get("message"),
+                "file": hydrated.get("file"),
+                "export_status": hydrated.get("export_status"),
+                "stats": hydrated.get("stats") or {},
+                "error_count": hydrated.get("error_count", 0),
+                "warning_count": hydrated.get("warning_count", 0),
+                "errors": hydrated.get("errors") or [],
+                "warnings": hydrated.get("warnings") or [],
+                "anomalies": hydrated.get("anomalies") or [],
+                "outputs": hydrated.get("outputs") or {},
+                "message": hydrated.get("message"),
+                "notes_path": hydrated.get("notes_path"),
             }
         )
-    downloads = summary.get("downloads") or build_downloads(summary)
+    downloads = summary.get("downloads") or build_downloads({"files": files_preview, **summary})
+    # 若说明文件已在输出目录但未进 downloads，补上
+    downloads = _ensure_notes_download(downloads, files_preview, settings.data_dir, batch.id)
+    issues = collect_visible_issues(files_preview)
+    listed, total = count_visible_issues(files_preview)
     return {
         "batch_id": batch.id,
         "status": batch.status,
@@ -268,6 +282,9 @@ def result(
         "files": files_preview,
         "downloads": downloads,
         "ready_for_download": bool(downloads),
+        "issues": issues,
+        "exception_count": listed,
+        "issues_total": total,
     }
 
 
@@ -285,7 +302,112 @@ def download(
     if batch.project != "project1":
         raise HTTPException(status_code=400, detail="仅项目1批次")
     allowed = _download_paths(batch.engine_summary)
+    settings = get_settings()
+    for item in _ensure_notes_download([], (batch.engine_summary or {}).get("files") or [], settings.data_dir, batch.id):
+        if item.get("path"):
+            allowed.add(item["path"])
     if path not in allowed:
         raise HTTPException(status_code=404, detail="该批次没有这个导出文件")
     full = _safe_data_file(path)
     return FileResponse(full, filename=Path(path).name)
+
+
+def _looks_brief(item: dict) -> bool:
+    extra = set(item.keys()) - {
+        "type",
+        "code",
+        "severity",
+        "订单号",
+        "order_no",
+        "message",
+        "msg",
+        "action",
+    }
+    return not extra
+
+
+def _needs_hydrate(item: dict) -> bool:
+    buckets = list(item.get("errors") or []) + list(item.get("warnings") or []) + list(
+        item.get("anomalies") or []
+    )
+    dicts = [x for x in buckets if isinstance(x, dict)]
+    if not dicts:
+        return True
+    return all(_looks_brief(x) for x in dicts)
+
+
+def _anomalies_json_candidates(item: dict, data_dir: Path, batch_id: int) -> list[Path]:
+    found: list[Path] = []
+    outputs = item.get("outputs") or {}
+    for value in list(outputs.values()) + [item.get("notes_path")]:
+        if not value or not isinstance(value, str):
+            continue
+        path = Path(value)
+        folder = path.parent if path.is_absolute() else (data_dir / path).parent
+        cand = folder / "anomalies.json"
+        if cand not in found:
+            found.append(cand)
+    stem = Path(str(item.get("file") or "")).stem
+    if stem:
+        found.append(data_dir / "outputs" / str(batch_id) / stem / "anomalies.json")
+    found.append(data_dir / "outputs" / str(batch_id) / "anomalies.json")
+    return found
+
+
+def _hydrate_file_issues(item: dict, data_dir: Path, batch_id: int) -> dict:
+    """历史批次若被 brief 丢掉 SKU/suffix，尝试从 anomalies.json 补全。"""
+    out = dict(item)
+    if not _needs_hydrate(out):
+        return out
+    import json
+
+    from app.services.project1_runner import _engine
+
+    brief = _engine()._issue_brief
+    for cand in _anomalies_json_candidates(out, data_dir, batch_id):
+        if not cand.is_file():
+            continue
+        try:
+            raw = json.loads(cand.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(raw, dict):
+            continue
+        if raw.get("errors") is not None:
+            out["errors"] = brief(list(raw.get("errors") or []))
+        if raw.get("warnings") is not None:
+            out["warnings"] = brief(list(raw.get("warnings") or []))
+        if raw.get("anomalies") is not None:
+            out["anomalies"] = brief(list(raw.get("anomalies") or []))
+        if not out.get("error_count"):
+            out["error_count"] = len(out.get("errors") or [])
+        if not out.get("warning_count"):
+            out["warning_count"] = len(out.get("warnings") or [])
+        break
+    return out
+
+
+def _ensure_notes_download(downloads: list, files_preview: list, data_dir: Path, batch_id: int) -> list:
+    out = list(downloads or [])
+    existing = {item.get("path") for item in out if isinstance(item, dict)}
+    for item in files_preview:
+        notes = (item.get("outputs") or {}).get("notes") or item.get("notes_path")
+        if not notes:
+            stem = Path(str(item.get("file") or "")).stem
+            cand = data_dir / "outputs" / str(batch_id) / stem / "异常说明.txt"
+            if cand.is_file():
+                try:
+                    notes = cand.resolve().relative_to(data_dir.resolve()).as_posix()
+                except ValueError:
+                    notes = str(cand)
+        if notes and notes not in existing:
+            out.append(
+                {
+                    "label": "异常说明",
+                    "path": notes,
+                    "kind": "notes",
+                    "source_file": item.get("file"),
+                }
+            )
+            existing.add(notes)
+    return out

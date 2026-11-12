@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from order_convert.config import load_rules
 from order_convert.pipeline import convert_order_file
-from order_convert.transform import is_china_direct, is_sku_like, d01_original_order_no, split_sku_lines
+from order_convert.transform import is_china_direct, is_sku_like, d01_original_order_no, split_sku_lines, d02_kefu_note, currency_suffix_for_logistics
 from order_convert.writers import normalize_argb
 from order_convert.io_excel import load_xlsx_rows
 
@@ -995,6 +995,139 @@ def test_qdx_does_not_override_china_direct(tmp_path):
     assert not m["dx_物流方式"].endswith("QDX")
 
 
+def test_china_direct_m00016_quantity_forced_to_one(tmp_path):
+    """输出 SKU 为 M00016 时，原数量即使为 3，店小秘产品总数和店管家02数量都改为 1；不报错、不阻断。"""
+    marker = load_rules().china_marker
+    rows = [
+        {
+            "订单号": "306-6216115-0326754",
+            "店铺账号": "亚马逊美国店（测试）",
+            "SKU": "WX10001-LYF",
+            "产品总数": 3,
+            "拣货备注": marker,
+            "物流方式": "燕文测试物流",
+            "运单号": "TRACK-M00016-QTY-001",
+            "订单金额": 199,
+        }
+    ]
+    raw = _make_minimal_raw(tmp_path, rows)
+    result = convert_order_file(raw, tmp_path / "out")
+    assert result.export_status == "ok"
+    assert result.formal_export_blocked is False
+    assert result.stats["errors"] == 0
+    m = result.mappings[0]
+    assert m["is_china_direct"] is True
+    assert m["dx_SKU"] == "M00016"
+    assert m["base_sku"] == "M00016"
+    assert m["dx_订单号"] == "306-6216115-0326754-1"
+    wb = openpyxl.load_workbook(result.dx_path)
+    headers = [wb.active.cell(1, c).value for c in range(1, wb.active.max_column + 1)]
+    qty_c = headers.index("产品总数") + 1
+    sku_c = headers.index("SKU") + 1
+    ono_c = headers.index("订单号") + 1
+    for r in range(2, wb.active.max_row + 1):
+        if wb.active.cell(r, ono_c).value == "306-6216115-0326754-1":
+            assert wb.active.cell(r, sku_c).value == "M00016"
+            assert wb.active.cell(r, qty_c).value == 1
+            break
+    else:
+        raise AssertionError("未找到店小秘订单 306-6216115-0326754-1")
+    import xlrd
+    sh = xlrd.open_workbook(str(result.d02_path)).sheet_by_index(0)
+    h2 = [sh.cell_value(0, c) for c in range(sh.ncols)]
+    for r in range(1, sh.nrows):
+        if sh.cell_value(r, h2.index("订单编号")) == "306-6216115-0326754-1":
+            assert sh.cell_value(r, h2.index("编号")) == "M00016"
+            assert sh.cell_value(r, h2.index("条码")) == "M00016"
+            assert sh.cell_value(r, h2.index("数量")) == 1
+            break
+    else:
+        raise AssertionError("未找到店管家02订单 306-6216115-0326754-1")
+
+
+def test_qdd_appends_to_dx_logistics_and_d02_kefu(tmp_path):
+    """基础 SKU=QDD（含去后缀）时：店小秘物流无空格追加 QDD；02客服备注无空格追加；02物流仍云途。"""
+    rows = [
+        {
+            "订单号": "SYNTH-QDD-SUF-001",
+            "店铺账号": "亚马逊美国店（测试）",
+            "SKU": "QDD-XYTU",
+            "产品总数": 1,
+            "拣货备注": "",
+            "物流方式": "宇星科技-FBM SHIP+云途特快（普货）",
+            "运单号": "TRACK-QDD-SUF-001",
+            "订单金额": 11,
+        },
+        {
+            "订单号": "SYNTH-QDD-PLAIN-001",
+            "店铺账号": "亚马逊美国店（测试）",
+            "SKU": "QDD",
+            "产品总数": 2,
+            "拣货备注": "",
+            "物流方式": "速卖通线上-无忧物流-标准",
+            "运单号": "TRACK-QDD-PLAIN-001",
+            "订单金额": 12,
+        },
+    ]
+    raw = _make_minimal_raw(tmp_path, rows)
+    result = convert_order_file(raw, tmp_path / "out")
+    assert result.export_status == "ok"
+    by = {m["原始订单号"]: m for m in result.mappings}
+    assert by["SYNTH-QDD-SUF-001"]["dx_SKU"] == "QDD"
+    assert by["SYNTH-QDD-SUF-001"]["base_sku"] == "QDD"
+    assert by["SYNTH-QDD-SUF-001"]["dx_物流方式"] == "宇星科技-FBM SHIP+云途特快（普货）QDD"
+    assert by["SYNTH-QDD-PLAIN-001"]["dx_物流方式"] == "速卖通线上-无忧物流-标准QDD"
+    wb = openpyxl.load_workbook(result.dx_path)
+    headers = [wb.active.cell(1, c).value for c in range(1, wb.active.max_column + 1)]
+    log_c = headers.index("物流方式") + 1
+    sku_c = headers.index("SKU") + 1
+    ono_c = headers.index("订单号") + 1
+    for r in range(2, wb.active.max_row + 1):
+        ono = wb.active.cell(r, ono_c).value
+        if ono == "SYNTH-QDD-SUF-001":
+            assert wb.active.cell(r, sku_c).value == "QDD"
+            assert wb.active.cell(r, log_c).value.endswith("QDD")
+            assert " QDD" not in str(wb.active.cell(r, log_c).value)
+    import xlrd
+    sh = xlrd.open_workbook(str(result.d02_path)).sheet_by_index(0)
+    h2 = [sh.cell_value(0, c) for c in range(sh.ncols)]
+    for r in range(1, sh.nrows):
+        ono = sh.cell_value(r, h2.index("订单编号"))
+        if ono == "SYNTH-QDD-SUF-001":
+            assert sh.cell_value(r, h2.index("编号")) == "QDD"
+            assert sh.cell_value(r, h2.index("条码")) == "QDD"
+            assert sh.cell_value(r, h2.index("物流方式")) == "云途"
+            assert sh.cell_value(r, h2.index("客服备注")) == "宇星科技-FBM SHIP+云途特快（普货）QDD"
+        if ono == "SYNTH-QDD-PLAIN-001":
+            assert sh.cell_value(r, h2.index("客服备注")) == "速卖通线上-无忧物流-标准QDD"
+    assert "QDD" in load_rules().logistics_append_skus
+    assert "QDX" in load_rules().logistics_append_skus
+
+
+def test_qdd_does_not_override_china_direct(tmp_path):
+    """中国直发优先：SKU 即使是 QDD 也不走 QDD 追加，物流接中国直发标记。"""
+    marker = load_rules().china_marker
+    rows = [
+        {
+            "订单号": "SYNTH-QDD-CHINA-001",
+            "店铺账号": "亚马逊美国店（测试）",
+            "SKU": "QDD-XYTU",
+            "产品总数": 1,
+            "拣货备注": marker,
+            "物流方式": "燕文测试物流",
+            "运单号": "TRACK-QDD-CHINA-001",
+            "订单金额": 3,
+        }
+    ]
+    raw = _make_minimal_raw(tmp_path, rows)
+    result = convert_order_file(raw, tmp_path / "out")
+    m = result.mappings[0]
+    assert m["is_china_direct"] is True
+    assert m["dx_SKU"] == "M00016"
+    assert m["dx_物流方式"] == "燕文测试物流" + marker
+    assert not m["dx_物流方式"].endswith("QDD")
+
+
 def test_iterative_strip_qhde_fbm_keeps_numeric_segment(tmp_path):
     """18MB-020-QHDE-FBM / 18MB-020-QHDE → 18MB-020；不剥成 18MB；白名单无 UNKNOWN。"""
     rows = [
@@ -1276,6 +1409,122 @@ def test_currency_append_usd_gbp_skip_eur(tmp_path):
             assert kefu == "燕文测试 " + marker + "USD"
         if ono == "SYNTH-CUR-EUR-001":
             assert kefu == "云途标准"
+
+
+def test_currency_not_appended_for_shirley_usd(tmp_path):
+    """Shirley（黑字非亚马逊）+ USD：店小秘物流和 02 客服备注都不以 USD 结尾。"""
+    rows = [
+        {
+            "订单号": "SYNTH-CUR-SHIRLEY-USD-001",
+            "店铺账号": "Shirley（自营）不贴logo",
+            "SKU": "WX1-LYF",
+            "产品总数": 1,
+            "拣货备注": "",
+            "物流方式": "速卖通线上-无忧物流-标准--汕头仓",
+            "运单号": "TRACK-CUR-SHIRLEY-USD",
+            "订单金额": 1,
+            "币种缩写": "USD",
+        },
+    ]
+    raw = _make_minimal_raw(tmp_path, rows)
+    result = convert_order_file(raw, tmp_path / "out")
+    m = result.mappings[0]
+    assert m["dx_物流方式"] == "速卖通线上-无忧物流-标准--汕头仓"
+    assert not str(m["dx_物流方式"]).endswith("USD")
+    rules = load_rules()
+    assert currency_suffix_for_logistics(rows[0], rules) == ""
+    kefu = d02_kefu_note(rows[0], rules, m["base_sku"])
+    assert kefu == "速卖通线上-无忧物流-标准--汕头仓"
+    assert not kefu.endswith("USD")
+
+
+def test_currency_not_appended_for_shirley_qdd_usd(tmp_path):
+    """Shirley + SKU QDD + USD：物流末尾是 QDD，不是 USD。"""
+    rows = [
+        {
+            "订单号": "SYNTH-CUR-SHIRLEY-QDD-001",
+            "店铺账号": "Shirley（自营）不贴logo",
+            "SKU": "QDD",
+            "产品总数": 1,
+            "拣货备注": "",
+            "物流方式": "速卖通线上-无忧物流-标准--汕头仓",
+            "运单号": "TRACK-CUR-SHIRLEY-QDD",
+            "订单金额": 1,
+            "币种缩写": "USD",
+        },
+    ]
+    raw = _make_minimal_raw(tmp_path, rows)
+    result = convert_order_file(raw, tmp_path / "out")
+    m = result.mappings[0]
+    assert m["dx_SKU"] == "QDD"
+    assert m["base_sku"] == "QDD"
+    assert m["dx_物流方式"] == "速卖通线上-无忧物流-标准--汕头仓QDD"
+    assert m["dx_物流方式"].endswith("QDD")
+    assert not m["dx_物流方式"].endswith("USD")
+    rules = load_rules()
+    kefu = d02_kefu_note(rows[0], rules, m["base_sku"])
+    assert kefu == "速卖通线上-无忧物流-标准--汕头仓QDD"
+    assert kefu.endswith("QDD")
+    assert not kefu.endswith("USD")
+
+
+def test_currency_not_appended_for_ebay_gbp(tmp_path):
+    """eBay 店铺 + GBP：不追加 GBP。"""
+    rows = [
+        {
+            "订单号": "SYNTH-CUR-EBAY-GBP-001",
+            "店铺账号": "ebay宇星店德国（自营）",
+            "SKU": "WX2-LYF",
+            "产品总数": 1,
+            "拣货备注": "",
+            "物流方式": "eBay线上",
+            "运单号": "TRACK-CUR-EBAY-GBP",
+            "订单金额": 1,
+            "币种缩写": "GBP",
+        },
+    ]
+    raw = _make_minimal_raw(tmp_path, rows)
+    result = convert_order_file(raw, tmp_path / "out")
+    m = result.mappings[0]
+    assert m["dx_物流方式"] == "eBay线上"
+    assert not str(m["dx_物流方式"]).endswith("GBP")
+    rules = load_rules()
+    assert currency_suffix_for_logistics(rows[0], rules) == ""
+    kefu = d02_kefu_note(rows[0], rules, m["base_sku"])
+    assert kefu == "eBay线上"
+    assert not kefu.endswith("GBP")
+
+
+def test_currency_appended_for_amazon_linyifen_cad(tmp_path):
+    """亚马逊林艺奋美国（自营）+ CAD：店小秘物流和 02 客服备注仍追加 CAD。"""
+    rows = [
+        {
+            "订单号": "SYNTH-CUR-AMZ-CAD-001",
+            "店铺账号": "亚马逊林艺奋美国（自营）",
+            "SKU": "WX3-LYF",
+            "产品总数": 1,
+            "拣货备注": "",
+            "物流方式": "云途特快",
+            "运单号": "TRACK-CUR-AMZ-CAD",
+            "订单金额": 1,
+            "币种缩写": "CAD",
+        },
+    ]
+    raw = _make_minimal_raw(tmp_path, rows)
+    result = convert_order_file(raw, tmp_path / "out")
+    m = result.mappings[0]
+    assert m["dx_物流方式"] == "云途特快CAD"
+    rules = load_rules()
+    assert currency_suffix_for_logistics(rows[0], rules) == "CAD"
+    import xlrd
+    sh = xlrd.open_workbook(str(result.d02_path)).sheet_by_index(0)
+    h2 = [sh.cell_value(0, c) for c in range(sh.ncols)]
+    found = False
+    for r in range(1, sh.nrows):
+        if sh.cell_value(r, h2.index("订单编号")) == "SYNTH-CUR-AMZ-CAD-001":
+            assert sh.cell_value(r, h2.index("客服备注")) == "云途特快CAD"
+            found = True
+    assert found
 
 
 def test_d02_duplicate_order_no_gets_suffix(tmp_path):

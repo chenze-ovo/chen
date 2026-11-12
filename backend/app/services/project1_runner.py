@@ -42,7 +42,10 @@ def convert_files(paths: list[Path], out_dir: Path) -> dict:
             "dx": _rel_str(outputs.get("dx")),
             "d01": _rel_str(outputs.get("d01")),
             "d02": _rel_str(outputs.get("d02")),
+            "notes": _rel_str(outputs.get("notes")),
         }
+        if item.get("notes_path"):
+            item["notes_path"] = _rel_str(item.get("notes_path"))
     return summary
 
 
@@ -87,4 +90,22 @@ def build_downloads(summary: dict) -> list[dict]:
                         "source_file": item.get("file"),
                     }
                 )
+        notes = (item.get("outputs") or {}).get("notes") or item.get("notes_path")
+        if notes:
+            downloads.append(
+                {
+                    "label": "异常说明",
+                    "path": notes,
+                    "kind": "notes",
+                    "source_file": item.get("file"),
+                }
+            )
     return downloads
+
+
+def collect_visible_issues(files: list[dict] | None) -> list[dict]:
+    return _engine().collect_visible_issues(files)
+
+
+def count_visible_issues(files: list[dict] | None) -> tuple[int, int]:
+    return _engine().count_visible_issues(files)
