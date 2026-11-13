@@ -4,7 +4,7 @@
 店管家正式 xls 用模板/金标准壳填写；02：copy 金标准壳 + xlutils 只改 cell 值并复用原 XF，再 set_colour_RGB(26→#F2DCDB) 保证 Excel/WPS 粉底粉（禁止 soffice 转 xlsx/xls，禁止刷 #FFFFCC 黄）。海外仓/运营有 identical_refs 壳时复制壳填数（保留 theme/CF/列宽）。无壳才新建并补 theme1。店管家02合计：拆单未填/中国直发未匹配→留空进审核，禁止海外仓金额顶、按比例猜、写0冒充。
 
 海外仓正本 Amazon：运单号=包裹号；物流方式=现物流+(原运单号非空且≠包裹号时追加)。店管家02 映射仍按原文物流。
-中国直发M00016 仍留海外仓表，订单金额保留源表原值（不改 0、不回填订单价格）；店管家02合计仍可回填。
+中国直发M00016 仍留海外仓表，订单金额保留源表原值（不改 0、不回填订单价格）；店管家02合计只用第2步金额原件回填这类单。其他中国直发不进店管家02，金额原件也不改02里其他行的价格。
 海外仓行高与金标准人工表一致：defaultRowHeight=25 且 customHeight。
 海外仓副本（oversea_copy.mode=selected_orders）：仅当 copy_order_nos 非空时独立导出选中订单行；
 规则 append_old_tracking_to_logistics + tracking=package_no。禁止再写全量隐藏行凑数。
@@ -99,6 +99,7 @@ def process_orders(
     _mark_duplicate_orders(routed, anomalies)
     _sort_routed(routed, config)
     partition = _partition(routed, anomalies)
+    _exclude_other_china_direct_from_dian_02(partition, anomalies, config)
     _exclude_ebay_split_from_dian_01(partition, anomalies)
 
     downloads: list[dict] = []
@@ -584,8 +585,10 @@ def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict
     cells["订单金额"] = original_amount
     amount = _decimal(original_amount)
     china = _is_china_direct(cells, config)
+    china_m00016 = _is_china_direct_m00016(cells, config)
     matched = False
-    if china:
+    # 第2步金额原件只给「中国直发M00016 海外仓发产品」回填店管家02合计，不改海外仓价格，也不改02里其他行
+    if china_m00016:
         if order_no in same_day:
             # 匹配金额只进内部 amount / amount_matched，供店管家02合计；海外仓正本 cells 订单金额保持原值
             amount = same_day[order_no]
@@ -596,9 +599,11 @@ def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict
                     "type": "CHINA_DIRECT_AMOUNT_UNMATCHED",
                     "task_type": "china_direct_amount_unmatched",
                     "order_no": order_no,
-                    "message": "中国直发未匹配店小秘或金额原件：店管家02合计留空并进审核；禁止写0，禁止用海外仓金额顶上。",
+                    "message": "中国直发M00016未匹配店小秘或金额原件：店管家02合计留空并进审核；禁止写0，禁止用海外仓金额顶上。",
                 }
             )
+    if _is_other_china_direct(cells, config) and destination == "dian_02":
+        destination = "oversea_only"
     if unknown_suffix:
         destination = "human_review"
     # 拣货备注含「管家已建单」→ 审核，不进 01/02（金标准店管家02排除这批）
@@ -645,6 +650,7 @@ def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict
         "ops_group": _ops_group_for(original_shop, note, config, shops, shop),
         "ops_cells": ops_cells,
         "china_direct": china,
+        "china_direct_m00016": china_m00016,
         "amount_matched": matched,
     }
 
@@ -1067,12 +1073,57 @@ def _shop_record(shop: str, shops: list[dict]) -> dict | None:
     return None
 
 
+_CHINA_DIRECT_M00016_NOTE = "中国直发M00016 海外仓发产品"
+
+
+def _note_blob(cells: dict) -> str:
+    return " ".join(_text(cells.get(key)) for key in ("拣货备注", "客服备注", "订单备注"))
+
+
+def _config_needles(config: dict, key: str, default: list[str]) -> list[str]:
+    values = [str(item) for item in ((config.get("china_direct") or {}).get(key) or default) if str(item).strip()]
+    return values or list(default)
+
+
 def _is_china_direct(cells: dict, config: dict) -> bool:
-    needles = [str(item) for item in ((config.get("china_direct") or {}).get("note_contains") or []) if str(item).strip()]
-    if not needles:
-        return False
-    blob = " ".join(_text(cells.get(key)) for key in ("拣货备注", "客服备注", "订单备注"))
+    needles = _config_needles(config, "note_contains", ["中国直发"])
+    blob = _note_blob(cells)
     return any(needle in blob for needle in needles)
+
+
+def _is_china_direct_m00016(cells: dict, config: dict) -> bool:
+    """店管家02允许回填金额的直发单：备注含「中国直发M00016 海外仓发产品」。"""
+    needles = _config_needles(config, "d02_backfill_note_contains", [_CHINA_DIRECT_M00016_NOTE])
+    blob = _note_blob(cells)
+    return any(needle in blob for needle in needles)
+
+
+def _is_other_china_direct(cells: dict, config: dict) -> bool:
+    """含「中国直发」但不是「中国直发M00016 海外仓发产品」：不进店管家02。"""
+    return _is_china_direct(cells, config) and not _is_china_direct_m00016(cells, config)
+
+
+def _exclude_other_china_direct_from_dian_02(partition: dict[str, list[dict]], anomalies: list[dict], config: dict) -> None:
+    """原表或第2步金额表里的其他中国直发单不进店管家02，也不因此新增02行。"""
+    rules = config.get("china_direct") or {}
+    if rules.get("exclude_other_from_dian_02", True) is False:
+        return
+    keep: list[dict] = []
+    for row in partition.get("dian_02") or []:
+        cells = row.get("cells") or {}
+        if _is_other_china_direct(cells, config):
+            row["destination"] = "oversea_only"
+            anomalies.append(
+                {
+                    "type": "CHINA_DIRECT_OTHER_SKIP_D02",
+                    "order_no": _text(row.get("order_no")),
+                    "file": "店管家02.xls",
+                    "message": "其他中国直发（非「中国直发M00016 海外仓发产品」）不进店管家02，仍留海外仓表。",
+                }
+            )
+            continue
+        keep.append(row)
+    partition["dian_02"] = keep
 
 
 def _apply_sku_maps(skus: list[str], sku_maps: list[dict]) -> list[str]:
@@ -1162,7 +1213,11 @@ def _mark_duplicate_orders(rows: list[dict], anomalies: list[dict]) -> None:
 def _partition(rows: list[dict], anomalies: list[dict]) -> dict[str, list[dict]]:
     groups = {"dian_01": [], "dian_02": [], "review": [], "human_review": []}
     for row in rows:
-        dest = row["destination"] if row["destination"] in groups else "human_review"
+        dest = row.get("destination")
+        # 其他中国直发只留海外仓，不要落到审核桶，也不进 01/02
+        if dest == "oversea_only":
+            continue
+        dest = dest if dest in groups else "human_review"
         row["destination"] = dest
         groups[dest].append(row)
     overlap = {row["order_no"] for row in groups["dian_01"]} & {row["order_no"] for row in groups["dian_02"]}
@@ -2087,11 +2142,14 @@ def _d02_total_amount(
 ):
     """店管家02「合计」。
 
-    - 中国直发：仅用店小秘/金额原件回填；匹配不到→留空+审核，不写0、不用海外仓金额。
+    - 「中国直发M00016 海外仓发产品」：仅用店小秘/金额原件回填；匹配不到→留空+审核，不写0、不用海外仓金额。
     - 拆单（同订单号多行）且无 manual_sku_amount：留空+审核，禁止按比例猜、禁止用海外仓总额顶。
-    - 其余：有明确非零金额才写入；金额为 0 写成空（禁止写出 0 / 0.0）。
+    - 其余：有明确非零金额才写入；金额为 0 写成空（禁止写出 0 / 0.0）。第2步金额表不改这些行的合计。
     """
-    china = bool(row.get("china_direct"))
+    if "china_direct_m00016" in row:
+        china = bool(row.get("china_direct_m00016"))
+    else:
+        china = _is_china_direct_m00016(row.get("cells") or {}, {})
     matched = bool(row.get("amount_matched"))
     base_no = _text(row.get("order_no"))
     is_split = bool(base_no) and int(order_counts.get(base_no) or 0) > 1

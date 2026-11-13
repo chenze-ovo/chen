@@ -19,6 +19,7 @@ from project2_engine.pipeline import (  # noqa: E402
     _d02_total_amount,
     _dian_02_values,
     _exclude_ebay_split_from_dian_01,
+    _exclude_other_china_direct_from_dian_02,
     _map_warehouse_logistics,
     _ops_group_for,
     _partition,
@@ -438,6 +439,197 @@ def test_unresolved_manual_shop_still_excluded_from_ops():
     row = _prepare_row(raw, cfg, _MANUAL_SHOPS, [], set(), {}, [])
     assert row["shop"] == "手工订单"
     assert row["ops_group"] is None
+
+
+
+def test_other_china_direct_stays_oversea_but_not_in_dian_02():
+    cfg = _cfg()
+    m00016 = _prepare_row(
+        _raw(订单号="M-1", 拣货备注="中国直发M00016 海外仓发产品---亚马逊宇星欧洲（自营）", 订单金额=18.8),
+        cfg, [], None, set(), {"M-1": Decimal("36.5")}, [],
+    )
+    other = _prepare_row(
+        _raw(订单号="O-1", 拣货备注="中国直发待核对", 订单金额=12),
+        cfg, [], None, set(), {"O-1": Decimal("88")}, [],
+    )
+    normal = _prepare_row(
+        _raw(订单号="N-1", 拣货备注="", 订单金额=10),
+        cfg, [], None, set(), {"N-1": Decimal("999")}, [],
+    )
+    assert m00016["destination"] == "dian_02"
+    assert m00016["china_direct_m00016"] is True
+    assert float(m00016["cells"]["订单金额"]) == 18.8
+    assert other["destination"] == "oversea_only"
+    assert other["china_direct"] is True
+    assert other["china_direct_m00016"] is False
+    assert float(other["cells"]["订单金额"]) == 12
+    assert normal["destination"] == "dian_02"
+    anomalies: list = []
+    part = _partition([m00016, other, normal], anomalies)
+    _exclude_other_china_direct_from_dian_02(part, anomalies, cfg)
+    nos = {row["order_no"] for row in part["dian_02"]}
+    assert nos == {"M-1", "N-1"}
+    assert "O-1" not in nos
+    assert other not in part["review"]
+    assert other not in part["human_review"]
+    assert _d02_total_amount(m00016, m00016["cells"], order_counts={"M-1": 1}, anomalies_out=[], order_no="M-1") == 36.5
+    # 金额原件里的非这类单号，不能改02里其他行的合计
+    assert _d02_total_amount(normal, normal["cells"], order_counts={"N-1": 1}, anomalies_out=[], order_no="N-1") == 10.0
+
+
+def test_amount_file_other_china_direct_does_not_add_dian_02_rows():
+    """原表/金额表里的其他直发单不进02；金额表不为非M00016行改价或加行。"""
+    cfg = _cfg()
+    tmp = Path("/tmp/p2-china-direct-d02")
+    src_dir = tmp / "in"
+    out_dir = tmp / "out"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    headers = [
+        "下单时间", "付款时间", "订单状态", "店铺账号", "订单号", "买家指定物流", "物流方式", "运单号",
+        "SKU", "产品总数", "客服备注", "订单备注", "拣货备注", "买家账号", "买家Email", "收货人姓名",
+        "详细地址", "收货人城市", "收货人州/省", "邮编", "收货人国家", "收货人电话", "收货人手机",
+        "英文报关名", "中文报关名", "报关重量", "申报单价", "地址1", "地址2", "中文国家名", "包裹号",
+        "订单金额", "币种缩写",
+    ]
+
+    def _write(path: Path, rows: list[dict]) -> None:
+        wb = Workbook()
+        ws = wb.active
+        for c, h in enumerate(headers, start=1):
+            ws.cell(1, c, h)
+        for r, vals in enumerate(rows, start=2):
+            for c, h in enumerate(headers, start=1):
+                ws.cell(r, c, vals.get(h, ""))
+        wb.save(path)
+        wb.close()
+
+    orders = src_dir / "orders.xlsx"
+    _write(
+        orders,
+        [
+            {
+                "店铺账号": "亚马逊测试店",
+                "订单号": "M-1",
+                "物流方式": "谷仓仓储-鑫赢科技-捷克仓-DHL德国派送",
+                "运单号": "TRK-M",
+                "SKU": "WX10001",
+                "产品总数": 1,
+                "拣货备注": "中国直发M00016 海外仓发产品---亚马逊宇星欧洲（自营）",
+                "收货人姓名": "Ada",
+                "收货人国家": "DE",
+                "订单金额": 18.8,
+                "币种缩写": "EUR",
+            },
+            {
+                "店铺账号": "亚马逊测试店",
+                "订单号": "O-1",
+                "物流方式": "谷仓仓储-深圳承思-捷克仓-CZ_GC_Parcel",
+                "运单号": "TRK-O",
+                "SKU": "WX10002",
+                "产品总数": 1,
+                "拣货备注": "中国直发待核对",
+                "收货人姓名": "Bob",
+                "收货人国家": "DE",
+                "订单金额": 12,
+                "币种缩写": "EUR",
+            },
+            {
+                "店铺账号": "亚马逊测试店",
+                "订单号": "N-1",
+                "物流方式": "谷仓仓储-鑫赢科技-捷克仓-DHL德国派送",
+                "运单号": "TRK-N",
+                "SKU": "WX10003",
+                "产品总数": 1,
+                "拣货备注": "",
+                "收货人姓名": "Cara",
+                "收货人国家": "DE",
+                "订单金额": 10,
+                "币种缩写": "EUR",
+            },
+        ],
+    )
+    amounts = src_dir / "amounts.xlsx"
+    extra = src_dir / "amount-other-direct.xlsx"
+    # 纯金额表：只有订单号+金额，不会作为订单行再进转换
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["订单号", "订单金额"])
+    ws.append(["M-1", 36.5])
+    ws.append(["N-1", 999])
+    ws.append(["O-1", 88])
+    ws.append(["D-1", 77])
+    wb.save(amounts)
+    wb.close()
+    _write(
+        extra,
+        [
+            {
+                "店铺账号": "亚马逊测试店",
+                "订单号": "D-1",
+                "物流方式": "云途",
+                "运单号": "TRK-D",
+                "SKU": "WX10009",
+                "产品总数": 1,
+                "拣货备注": "中国直发其他渠道",
+                "收货人姓名": "Dan",
+                "收货人国家": "DE",
+                "订单金额": 77,
+                "币种缩写": "EUR",
+            },
+        ],
+    )
+    summary = process_orders([orders], out_dir, config=cfg, same_day_files=[amounts, extra], export_date="2026-11-13")
+    by_no = {item["order_no"]: item for item in summary["orders"]}
+    d02_nos = {item["order_no"] for item in summary["orders"] if item["destination"] == "dian_02"}
+    assert "M-1" in d02_nos
+    assert "N-1" in d02_nos
+    assert "O-1" not in d02_nos
+    assert "D-1" not in d02_nos
+    assert by_no["O-1"]["destination"] == "oversea_only"
+    assert by_no["D-1"]["destination"] == "oversea_only"
+    assert summary["stats"]["dian_02"] == 2
+
+    oversea = next(item for item in summary["downloads"] if item["kind"] == "oversea")
+    book = load_workbook(out_dir / oversea["path"])
+    sheet = book.active
+    headers_out = [sheet.cell(1, c).value for c in range(1, sheet.max_column + 1)]
+    idx = {name: i + 1 for i, name in enumerate(headers_out)}
+    amounts_by_no = {}
+    for r in range(2, sheet.max_row + 1):
+        amounts_by_no[str(sheet.cell(r, idx["订单号"]).value)] = sheet.cell(r, idx["订单金额"]).value
+    book.close()
+    assert float(amounts_by_no["M-1"]) == 18.8
+    assert float(amounts_by_no["O-1"]) == 12
+    assert "O-1" in amounts_by_no
+
+    # 用准备后的行核对02合计：M-1 回填 36.5，N-1 保持原表 10，不被金额原件 999 改掉
+    m_row = _prepare_row(
+        _raw(订单号="M-1", 拣货备注="中国直发M00016 海外仓发产品---亚马逊宇星欧洲（自营）", 订单金额=18.8),
+        cfg, [], None, set(), {"M-1": Decimal("36.5"), "N-1": Decimal("999"), "D-1": Decimal("77")}, [],
+    )
+    n_row = _prepare_row(
+        _raw(订单号="N-1", 拣货备注="", 订单金额=10),
+        cfg, [], None, set(), {"M-1": Decimal("36.5"), "N-1": Decimal("999"), "D-1": Decimal("77")}, [],
+    )
+    assert _d02_total_amount(m_row, m_row["cells"], order_counts={"M-1": 1}, anomalies_out=[], order_no="M-1") == 36.5
+    assert _d02_total_amount(n_row, n_row["cells"], order_counts={"N-1": 1}, anomalies_out=[], order_no="N-1") == 10.0
+
+
+def test_unmatched_m00016_d02_total_left_empty():
+    cfg = _cfg()
+    row = _prepare_row(
+        _raw(订单号="M-2", 拣货备注="中国直发M00016 海外仓发产品", 订单金额=18.8),
+        cfg, [], None, set(), {}, [],
+    )
+    assert row["china_direct_m00016"] is True
+    assert row["amount_matched"] is False
+    assert float(row["cells"]["订单金额"]) == 18.8
+    anoms: list = []
+    total = _d02_total_amount(row, row["cells"], order_counts={"M-2": 1}, anomalies_out=anoms, order_no="M-2")
+    assert total == ""
+    assert any(item.get("reason") == "china_direct_unmatched" for item in anoms)
+
 
 
 if __name__ == "__main__":

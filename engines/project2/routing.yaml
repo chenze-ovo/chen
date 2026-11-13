@@ -157,10 +157,13 @@ d01_field_rules:
     禁止把项目1的列映射原样抄进项目2引擎。模板文件未到，不阻塞 Phase 0。
 
 # 项目2中国直发：禁止把金额改成 0，也不改成项目1的 M00016。
-# 备注里出现 note_contains 时，才用店小秘或金额原件对照金额。
+# 备注含「中国直发」的行仍可留在海外仓表；只有「中国直发M00016 海外仓发产品」才进店管家02并用金额原件回填合计。
 china_direct:
   note_contains:
     - 中国直发
+  d02_backfill_note_contains:
+    - 中国直发M00016 海外仓发产品
+  exclude_other_from_dian_02: true
   force_zero: false
   replace_sku: false
 china_direct_amounts:
@@ -171,12 +174,11 @@ china_direct_amounts:
   d02_total_on_no_match: empty
   review_task_type: china_direct_amount_unmatched
   note: >
-    项目2的中国直发金额不能写成 0，也不套用项目1的 M00016。
-    同一批次里上传当天店小秘订单 Excel（kind = dianxiaomi_same_day）后，
-    按原订单号关联店小秘带-1的订单号回填金额到店管家02「合计」。
-    对不上：店管家02合计留空并进人工审核；禁止写0冒充，禁止用海外仓金额顶上。
     「中国直发M00016 海外仓发产品」仍留海外仓表；海外仓正本订单金额保留源表原值，
-    不要改成 0，也不要回填成订单价格。店管家02合计仍可用店小秘/金额原件回填。
+    不要改成 0，也不要回填成订单价格，不套用项目1的合计0/M00016规则。
+    第2步店小秘/金额原件只给这类单回填店管家02「合计」；对不上则合计留空并进加工说明。
+    含「中国直发」但不是这类文案的其他直发单，不进店管家02。
+    金额原件里的其他单号不改02里非这类单的价格，也不因此往02加行。
 
 # 拆分 SKU 金额：员工看店小秘网页后手工录入。
 logistics_append:
