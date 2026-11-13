@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+import re
 
 import xlwt
 from openpyxl import Workbook, load_workbook
@@ -528,7 +529,7 @@ def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict
     note = _text(cells.get("拣货备注"))
     original_shop = _text(cells.get("店铺账号"))
     raw_logistics = cells.get("物流方式")
-    shop = _shop_from_note(cells, note, anomalies, config)
+    shop = _shop_from_note(cells, note, anomalies, config, shops)
     cells["店铺账号"] = shop or cells.get("店铺账号")
     platform = _text(cells.get("平台"))
     order_no = _text(cells.get("订单号"))
@@ -648,11 +649,163 @@ def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict
     }
 
 
-def _shop_from_note(cells: dict, note: str, anomalies: list[dict], config: dict | None = None) -> str:
-    """手工订单按客服备注归属；中国直发备注里 --- 后面的店名优先。制单-- 不是店名。"""
+_MANUAL_SHOP = "手工订单"
+_NOTE_SHOP_COLUMNS = ("客服备注", "拣货备注", "订单备注")
+_NON_SHOP_DIAN = ("店铺", "商店", "门店", "网店", "店内", "店里", "到店", "本店", "进店")
+_SHOP_INSTRUCTIONAL = (
+    "中国直发",
+    "海外仓发",
+    "产品发",
+    "发亚马逊",
+    "FBA库存",
+    "缺件",
+    "给客户",
+    "计入",
+    "待核对",
+    "管家已建单",
+    "已上架",
+    "移仓",
+    "制单--",
+    "已制单--",
+)
+# ahav宇星店德国 / ebay宇星店德国（自营）
+_SHOP_DIAN_RE = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]*店[A-Za-z0-9\u4e00-\u9fff（）()]{0,20}")
+_SHOP_OWNED_RE = re.compile(
+    r"(?:亚马逊|Amazon|ebay|eBay|AHAV|ahav|TikTok|速卖通|Cdiscount|Zeemoto|Shirley|"
+    r"宇星|创趣|林艺奋|吴晓虹|鲁圳|承思)[A-Za-z0-9\u4e00-\u9fff（）()_\- ]{0,30}"
+    r"(?:（自营）|\(自营\)|半托管\d*店?|不贴logo)"
+)
+_TRACKING_RE = re.compile(r"(?:已)?制单--+[^\r\n]*")
+
+
+def _known_shop_names(config: dict | None, shops: list[dict] | None) -> list[str]:
+    names: set[str] = set()
+    for item in shops or []:
+        name = _text((item or {}).get("shop_account"))
+        if name and name != _MANUAL_SHOP:
+            names.add(name)
+    for rule in (config or {}).get("ops_group_assignments") or []:
+        name = _text((rule or {}).get("shop_account"))
+        if name and name != _MANUAL_SHOP:
+            names.add(name)
+    return sorted(names, key=lambda x: (-len(x), x))
+
+
+def _strip_tracking(text: str) -> str:
+    return _TRACKING_RE.sub(" ", text or "").strip()
+
+
+def _looks_like_shop_phrase(text: str) -> bool:
+    """候选片段是否像店名，而不是一段说明或运单。"""
+    t = _text(text)
+    if not t or t == _MANUAL_SHOP or len(t) > 40:
+        return False
+    if t.startswith("-") or t.isdigit() or _TRACKING_RE.search(t):
+        return False
+    if any(p in t for p in ("。", "！", "？", "；", ";", "\n")):
+        return False
+    if any(n in t for n in _SHOP_INSTRUCTIONAL):
+        return False
+    if "补发" in t or "重新" in t:
+        return False
+    if t in _NON_SHOP_DIAN:
+        return False
+    if "店" in t:
+        # 仅「店铺/门店」这类词不算店名
+        remainder = t
+        for bad in _NON_SHOP_DIAN:
+            remainder = remainder.replace(bad, "")
+        if "店" in remainder:
+            return True
+    if any(k in t for k in ("（自营）", "(自营)", "半托管", "不贴logo")):
+        return True
+    if _SHOP_OWNED_RE.fullmatch(t) or _SHOP_DIAN_RE.fullmatch(t):
+        return True
+    return False
+
+
+def _is_standalone_shop_name(text: str, known: list[str]) -> bool:
+    """客服备注整列：短且像店名时才采用，不把说明性段落当店名。"""
+    t = _text(text)
+    if not t or t == _MANUAL_SHOP:
+        return False
+    folded = t.casefold()
+    if any(t == k or folded == k.casefold() for k in known):
+        return True
+    if "\n" in t or len(t) > 40:
+        return False
+    return _looks_like_shop_phrase(t)
+
+
+def _longest_known_in(text: str, known: list[str]) -> str:
+    hay = _strip_tracking(text)
+    if not hay or not known:
+        return ""
+    folded = hay.casefold()
+    for name in known:
+        if name and name.casefold() in folded:
+            return name
+    return ""
+
+
+def _extract_shop_from_text(text: str, known: list[str]) -> str:
+    """从一段备注里抽店名：已知名单、--- 之后、末尾「…店…」短语。"""
+    cleaned = _strip_tracking(text)
+    if not cleaned:
+        return ""
+    found = _longest_known_in(cleaned, known)
+    if found:
+        return found
+    if "---" in cleaned:
+        tail = cleaned.split("---")[-1].strip()
+        tail = (tail.splitlines()[0] if tail else "").strip()
+        if tail and not tail.startswith("-"):
+            known_tail = _longest_known_in(tail, known)
+            if known_tail:
+                return known_tail
+            if _looks_like_shop_phrase(tail):
+                return tail
+    tokens = re.split(r"[\s,，、]+", cleaned)
+    for token in reversed(tokens):
+        token = token.strip().strip("。．.！!？?")
+        if _looks_like_shop_phrase(token):
+            return token
+    candidates: list[tuple[int, str]] = []
+    for pattern in (_SHOP_DIAN_RE, _SHOP_OWNED_RE):
+        for match in pattern.finditer(cleaned):
+            phrase = match.group(0).strip()
+            if _looks_like_shop_phrase(phrase):
+                candidates.append((match.start(), phrase))
+    if candidates:
+        # 同起点取更长，再取文中最后一次出现
+        best: dict[int, str] = {}
+        for start, phrase in candidates:
+            if len(phrase) >= len(best.get(start, "")):
+                best[start] = phrase
+        last_start = max(best)
+        return best[last_start]
+    return ""
+
+
+def _shop_from_note(
+    cells: dict,
+    note: str,
+    anomalies: list[dict],
+    config: dict | None = None,
+    shops: list[dict] | None = None,
+) -> str:
+    """手工订单按备注里的真实店名改写店铺账号。
+
+    不要求备注必须有「---」。客服备注若本身是短店名则优先；
+    否则在客服/拣货/订单备注里做已知店名最长匹配，或抽取末尾含「店」的短语、--- 后的店名。
+    整段说明、「制单--」运单、中国直发说明不能当店名；认不出则保持手工订单。
+    非手工订单仍保留旧规则：拣货备注里 --- 后面的店名优先。
+    """
     shop = _text(cells.get("店铺账号"))
     order_no = _text(cells.get("订单号"))
+    known = _known_shop_names(config, shops)
     rules = (config or {}).get("manual_shop_rules") or []
+    preferred_columns: list[str] = []
     for rule in rules:
         when_shop = str(rule.get("when_shop") or "")
         column = str(rule.get("shop_from_column") or "")
@@ -660,13 +813,31 @@ def _shop_from_note(cells: dict, note: str, anomalies: list[dict], config: dict 
         target = str(rule.get("shop_account") or "")
         if when_shop and shop != when_shop:
             continue
-        if column:
-            taken = _text(cells.get(column))
-            if taken:
-                return taken
-        if needle and needle in note and target:
+        if needle and needle in (note or "") and target:
             return target
-    if "---" not in note:
+        if column and column not in preferred_columns:
+            preferred_columns.append(column)
+
+    if shop == _MANUAL_SHOP:
+        for column in preferred_columns or ["客服备注"]:
+            taken = _text(cells.get(column))
+            if taken and _is_standalone_shop_name(taken, known):
+                return taken
+        fields = [_text(cells.get(col)) for col in _NOTE_SHOP_COLUMNS]
+        best = ""
+        for field in fields:
+            found = _longest_known_in(field, known)
+            if found and len(found) > len(best):
+                best = found
+        if best:
+            return best
+        for field in fields:
+            extracted = _extract_shop_from_text(field, known)
+            if extracted:
+                return extracted
+        return shop
+
+    if "---" not in (note or ""):
         return shop
     tail = note.split("---")[-1].strip()
     if not tail or tail.startswith("-"):

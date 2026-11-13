@@ -20,8 +20,10 @@ from project2_engine.pipeline import (  # noqa: E402
     _dian_02_values,
     _exclude_ebay_split_from_dian_01,
     _map_warehouse_logistics,
+    _ops_group_for,
     _partition,
     _prepare_row,
+    _shop_from_note,
     process_orders,
 )
 
@@ -269,3 +271,178 @@ def test_oversea_xlsx_row_height_matches_gold():
     for tag in row_tags:
         assert 'ht="25' in tag, tag
         assert "customHeight=" in tag, tag
+
+
+# --- 手工订单从备注抽店名（不要求必须有 ---） ---
+
+_MANUAL_CFG = {"manual_shop_rules": [{"when_shop": "手工订单", "shop_from_column": "客服备注"}]}
+_MANUAL_SHOPS = [
+    {"shop_account": "亚马逊香港创趣欧洲（自营）", "ops_group": "创趣欧洲"},
+    {"shop_account": "Zeemoto欧洲半托管", "ops_group": "Zeemoto"},
+    {"shop_account": "Zeemoto欧洲半托管2店", "ops_group": "Zeemoto"},
+    {"shop_account": "ahav宇星店德国", "ops_group": "宇星欧洲"},
+    {"shop_account": "ebay宇星店德国", "ops_group": "宇星欧洲"},
+    {"shop_account": "ebay宇星店德国（自营）", "ops_group": "宇星欧洲"},
+]
+
+
+def _manual_cells(**kwargs) -> dict:
+    row = {
+        "店铺账号": "手工订单",
+        "订单号": "X",
+        "拣货备注": "",
+        "客服备注": "",
+        "订单备注": "",
+    }
+    row.update(kwargs)
+    return row
+
+
+def _resolve_manual(cells: dict, shops=None, config=None):
+    anomalies: list = []
+    shop = _shop_from_note(
+        cells,
+        str(cells.get("拣货备注") or ""),
+        anomalies,
+        config or _MANUAL_CFG,
+        shops if shops is not None else _MANUAL_SHOPS,
+    )
+    return shop, anomalies
+
+
+def test_ahav_yuxing_without_dashes():
+    shop, anoms = _resolve_manual(
+        _manual_cells(
+            订单号="24474200-44171",
+            拣货备注="产品发亚马逊FBA库存，海外仓发货00000 ahav宇星店德国",
+        )
+    )
+    assert shop == "ahav宇星店德国"
+    assert shop != "手工订单"
+    assert shop != "ebay宇星店德国"
+    assert "产品发亚马逊" not in shop
+    assert not anoms
+
+
+def test_kefu_note_standalone_shop_still_used():
+    shop, _ = _resolve_manual(
+        _manual_cells(
+            订单号="028-6658054-8312365-2",
+            拣货备注="缺件严重，重新给客户补发一只新的 海外仓发货",
+            客服备注="亚马逊香港创趣欧洲（自营）",
+        )
+    )
+    assert shop == "亚马逊香港创趣欧洲（自营）"
+
+
+def test_kefu_shop_not_in_catalog_still_used():
+    shop, _ = _resolve_manual(
+        _manual_cells(
+            订单号="2026100417011LZYL",
+            拣货备注="给客户补发一只17011   计入鲁圳美国 沈伊羚",
+            客服备注="亚马逊鲁圳美国（自营）",
+        )
+    )
+    assert shop == "亚马逊鲁圳美国（自营）"
+
+
+def test_dash_separator_shop_still_used():
+    shop, _ = _resolve_manual(
+        _manual_cells(
+            订单号="X-DASH",
+            拣货备注="中国直发补货 --- 亚马逊林艺奋欧洲（自营）",
+        )
+    )
+    assert shop == "亚马逊林艺奋欧洲（自营）"
+
+
+def test_explanatory_pick_note_stays_manual():
+    shop, _ = _resolve_manual(
+        _manual_cells(
+            订单号="X-NONE",
+            拣货备注="缺件严重，重新给客户补发一只新的 海外仓发货",
+        )
+    )
+    assert shop == "手工订单"
+
+
+def test_tracking_and_china_direct_are_not_shop_names():
+    shop_track, _ = _resolve_manual(_manual_cells(拣货备注="制单--384003459069"))
+    shop_china, _ = _resolve_manual(_manual_cells(拣货备注="中国直发M00016 海外仓发产品"))
+    assert shop_track == "手工订单"
+    assert shop_china == "手工订单"
+
+
+def test_longest_known_shop_wins():
+    shop, _ = _resolve_manual(_manual_cells(拣货备注="重发 Zeemoto欧洲半托管2店 库存"))
+    assert shop == "Zeemoto欧洲半托管2店"
+
+
+def test_order_note_shop_phrase():
+    shop, _ = _resolve_manual(_manual_cells(订单备注="请按 ahav宇星店德国 发出"))
+    assert shop == "ahav宇星店德国"
+
+
+def test_long_kefu_explanation_is_ignored():
+    shop, _ = _resolve_manual(
+        _manual_cells(
+            拣货备注="海外仓发货 ahav宇星店德国",
+            客服备注="产品发亚马逊FBA库存，请按海外仓发出",
+        )
+    )
+    assert shop == "ahav宇星店德国"
+
+
+def test_non_manual_dash_rule_unchanged():
+    shop, anoms = _resolve_manual(
+        _manual_cells(
+            店铺账号="亚马逊香港创趣欧洲（自营）",
+            拣货备注="中国直发 --- 其他店名",
+        )
+    )
+    assert shop == "其他店名"
+    assert not anoms
+
+
+def test_resolved_manual_shop_gets_ops_group():
+    cfg = {
+        **_MANUAL_CFG,
+        "ops_export": {"keep_raw_logistics": True, "exclude_shops": ["手工订单"]},
+    }
+    raw = {
+        "cells": _manual_cells(
+            订单号="24474200-44171",
+            拣货备注="产品发亚马逊FBA库存，海外仓发货00000 ahav宇星店德国",
+        ),
+        "row_mark": "white",
+    }
+    row = _prepare_row(raw, cfg, _MANUAL_SHOPS, [], set(), {}, [])
+    assert row["raw_shop"] == "手工订单"
+    assert row["shop"] == "ahav宇星店德国"
+    assert row["ops_group"] == "宇星欧洲"
+    assert (
+        _ops_group_for("手工订单", raw["cells"]["拣货备注"], cfg, _MANUAL_SHOPS, row["shop"])
+        == "宇星欧洲"
+    )
+
+
+def test_unresolved_manual_shop_still_excluded_from_ops():
+    cfg = {
+        **_MANUAL_CFG,
+        "ops_export": {"keep_raw_logistics": True, "exclude_shops": ["手工订单"]},
+    }
+    raw = {
+        "cells": _manual_cells(订单号="X-NONE", 拣货备注="缺件严重，重新给客户补发一只新的 海外仓发货"),
+        "row_mark": "white",
+    }
+    row = _prepare_row(raw, cfg, _MANUAL_SHOPS, [], set(), {}, [])
+    assert row["shop"] == "手工订单"
+    assert row["ops_group"] is None
+
+
+if __name__ == "__main__":
+    names = [name for name, fn in list(globals().items()) if name.startswith("test_") and callable(fn)]
+    for name in names:
+        globals()[name]()
+        print("ok", name)
+    print(f"OK: {len(names)} pipeline rule tests passed")
