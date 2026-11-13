@@ -17,6 +17,8 @@ sku_map:
   JG135: WX13135
   "1729677372332743562": WX13201
   WX13108N-CDCS: WX13108S
+  WX13111: WX13199
+  WX10021: WX27020
 # 仓库/物流映射表：店管家02「仓库」列故意留空；「物流方式」仍按本表填写
 warehouse_logistics_map:
   # 按 contains 顺序匹配（更具体的写在前面）；可编辑
@@ -173,12 +175,14 @@ china_direct_amounts:
     同一批次里上传当天店小秘订单 Excel（kind = dianxiaomi_same_day）后，
     按原订单号关联店小秘带-1的订单号回填金额到店管家02「合计」。
     对不上：店管家02合计留空并进人工审核；禁止写0冒充，禁止用海外仓金额顶上。
-    海外仓正本中国直发金额仍可为0（与人工表一致）。
+    「中国直发M00016 海外仓发产品」仍留海外仓表；海外仓正本订单金额保留源表原值，
+    不要改成 0，也不要回填成订单价格。店管家02合计仍可用店小秘/金额原件回填。
 
 # 拆分 SKU 金额：员工看店小秘网页后手工录入。
 logistics_append:
   skip_pick_note_prefixes:
     - 制单
+    - 已制单
   skip_currency:
     - EUR
     - 欧元
@@ -197,9 +201,9 @@ logistics_append:
     - CNY
     - 千红捷克仓已上架
   note: >
-    允许整段拼进物流的备注：移仓、补发、千红捷克仓已上架、样品。
-    允许按空格拆开后拼入的词：分单、USD、CNY。
-    中国直发、管家已建单、以及映射后的 SKU 本体不拼进物流。
+    说明性拣货备注（非制单--/已制单--）整段追加到海外仓物流方式，
+    例如「WX10171发一只美国仓，PayPal收36美金，记宇星美国托管」。
+    中国直发、管家已建单不拼进物流。制单--/已制单-- 只用来抽运单号。
 
 channel_replacements:
   - from: "Collections by TikTok"
@@ -295,7 +299,7 @@ routing_policy:
       shop_name_contains: ["ebay"]
       platforms: ["eBay", "ebay"]
     row_marks: ["green", "white"]
-    note: "eBay → 店管家01。绿标和白标都保留。同一完整订单号多行（分单）整单不进店管家01，改入审核/加工说明。"
+    note: "eBay → 店管家01。绿标和白标都保留。同一完整订单号多行，或备注含「分单」（如 24474201-44270），整单不进店管家01，改入审核/加工说明。"
 
   - id: other_confirmed_new_shops_to_dian_02
     enabled: true
@@ -391,6 +395,16 @@ sample_gaps:
   - "店管家01列可以参考项目1，但项目2必须独立核对，禁止把项目1映射原样抄进来。"
 
 
+
+# 海外仓正本行高：与金标准人工表一致（sheetFormatPr defaultRowHeight=25 customHeight=1，每行 25）
+oversea_row_height: 25
+
+# 海外仓正本 Amazon：运单号=包裹号；物流方式=原物流+(原运单号非空且≠包裹号时追加)。
+# 店管家02 的 warehouse_logistics_map 仍按原文物流匹配。
+oversea_amazon:
+  tracking_equals_package_no: true
+  append_old_tracking_to_logistics: true
+  d02_map_uses_source_logistics: true
 
 # 海外仓正本/副本填充色（对金标准 2026.10.4 逐行 fill 归纳）
 # 默认 theme=5 tint=0.8 浅橙；theme=7 tint=0.8 偏绿仅：

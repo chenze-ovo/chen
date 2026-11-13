@@ -3,6 +3,9 @@
 不读取项目1的 rules.yaml。中国直发不把金额改成 0，也不替换成 M00016。
 店管家正式 xls 用模板/金标准壳填写；02：copy 金标准壳 + xlutils 只改 cell 值并复用原 XF，再 set_colour_RGB(26→#F2DCDB) 保证 Excel/WPS 粉底粉（禁止 soffice 转 xlsx/xls，禁止刷 #FFFFCC 黄）。海外仓/运营有 identical_refs 壳时复制壳填数（保留 theme/CF/列宽）。无壳才新建并补 theme1。店管家02合计：拆单未填/中国直发未匹配→留空进审核，禁止海外仓金额顶、按比例猜、写0冒充。
 
+海外仓正本 Amazon：运单号=包裹号；物流方式=现物流+(原运单号非空且≠包裹号时追加)。店管家02 映射仍按原文物流。
+中国直发M00016 仍留海外仓表，订单金额保留源表原值（不改 0、不回填订单价格）；店管家02合计仍可回填。
+海外仓行高与金标准人工表一致：defaultRowHeight=25 且 customHeight。
 海外仓副本（oversea_copy.mode=selected_orders）：仅当 copy_order_nos 非空时独立导出选中订单行；
 规则 append_old_tracking_to_logistics + tracking=package_no。禁止再写全量隐藏行凑数。
 """
@@ -13,6 +16,30 @@ from pathlib import Path
 
 import xlwt
 from openpyxl import Workbook, load_workbook
+
+OVERSEA_ROW_HEIGHT = 25.0
+
+
+def _combined_sku_maps(config: dict, sku_maps: list[dict] | None) -> list[dict]:
+    """yaml.sku_map 优先，再合并调用方/数据库映射，按 source_sku 去重（大小写不敏感）。"""
+    out: list[dict] = []
+    seen: set[str] = set()
+    yaml_items = [
+        {"source_sku": str(source), "target_sku": str(target), "enabled": True}
+        for source, target in (config.get("sku_map") or {}).items()
+        if str(source).strip() and str(target).strip()
+    ]
+    incoming = [item for item in (sku_maps or []) if item.get("enabled", True)]
+    for item in yaml_items + incoming:
+        src = str(item.get("source_sku") or "").strip()
+        if not src:
+            continue
+        key = src.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
 
 
 def process_orders(
@@ -33,7 +60,7 @@ def process_orders(
 ) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     shops = shops or []
-    sku_maps = [item for item in (sku_maps or []) if item.get("enabled", True)]
+    sku_maps = _combined_sku_maps(config, sku_maps)
     suffixes = {str(item) for item in (sku_suffixes or []) if str(item).strip()}
     column_maps = column_maps or {}
     templates = templates or {}
@@ -496,6 +523,8 @@ def _apply_manual_amounts(routed: list[dict], manual_amounts: dict) -> None:
 
 def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict], suffixes: set[str], same_day: dict[str, Decimal], anomalies: list[dict]) -> dict:
     cells = dict(raw["cells"])
+    source_notes = {key: cells.get(key) for key in ("客服备注", "订单备注", "拣货备注")}
+    original_amount = cells.get("订单金额")
     note = _text(cells.get("拣货备注"))
     original_shop = _text(cells.get("店铺账号"))
     raw_logistics = cells.get("物流方式")
@@ -508,6 +537,7 @@ def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict
     destination = _route(shop, platform, already, config, shop_rule)
     raw_sku_text = cells.get("SKU")
     suspects_before = len(config.get("_sku_suspects") or [])
+    sku_maps = _combined_sku_maps(config, sku_maps)
     skus, unknown_suffix = _transform_skus(_split_sku(raw_sku_text), suffixes, sku_maps, note, config)
     for suspect in (config.get("_sku_suspects") or [])[suspects_before:]:
         if suspect.get("audit_only"):
@@ -543,12 +573,20 @@ def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict
     if logistics:
         cells["物流方式"] = logistics
     _fill_tracking(cells, note, config)
-    amount = _decimal(cells.get("订单金额"))
+    original_tracking = _text(cells.get("运单号"))
+    if _is_amazon_logistics(_text(cells.get("物流方式")) or _text(raw_logistics), config):
+        _swap_tracking_to_package(cells)
+    # 源表备注写进海外仓结果，禁止后续步骤覆盖
+    for key, value in source_notes.items():
+        cells[key] = value
+    # 海外仓正本订单金额始终保留源表原值，禁止改 0、禁止用订单价格或店小秘金额覆盖
+    cells["订单金额"] = original_amount
+    amount = _decimal(original_amount)
     china = _is_china_direct(cells, config)
     matched = False
     if china:
         if order_no in same_day:
-            # 匹配金额只进内部 amount / amount_matched，供店管家02合计；海外仓正本 cells 订单金额保持原值（常为 0）
+            # 匹配金额只进内部 amount / amount_matched，供店管家02合计；海外仓正本 cells 订单金额保持原值
             amount = same_day[order_no]
             matched = True
         else:
@@ -577,6 +615,8 @@ def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict
     ops_cells = {**cells, "SKU": raw_sku_text}
     if (config.get("ops_export") or {}).get("keep_raw_logistics", True):
         ops_cells["物流方式"] = raw_logistics
+    if original_tracking:
+        ops_cells["运单号"] = original_tracking
     # 运营表每行补币种后缀（非 EUR）：主表已加、分店表不加会导致同一单两种物流
     ops_skip = {str(x).upper() for x in ((config.get("logistics_append") or {}).get("skip_currency") or ["EUR", "欧元"])}
     ops_currency = _text(cells.get("币种缩写") or cells.get("币种"))
@@ -596,7 +636,8 @@ def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict
         "amount": amount,
         "skus": skus or [""],
         "quantity": _text(cells.get("产品总数")),
-        "tracking_nos": _split_lines(cells.get("运单号")),
+        "raw_logistics": raw_logistics,
+        "tracking_nos": _split_lines(original_tracking) or _split_lines(cells.get("运单号")),
         "country": _text(cells.get("收货人国家")),
         "buyer": _text(cells.get("收货人姓名")),
         "already": already,
@@ -759,31 +800,33 @@ def _ops_assignment_for(shop: str, config: dict) -> dict | None:
     return None
 
 
+def _is_zhizhan_note_line(line: str, skip_prefixes: tuple[str, ...]) -> bool:
+    """制单-- / 已制单-- 行只用于抽运单号，不拼进物流方式。"""
+    text = (line or "").strip()
+    if not text:
+        return True
+    prefixes = list(skip_prefixes) + ["制单--", "已制单--", "制单", "已制单"]
+    return text.startswith(tuple(dict.fromkeys(prefixes)))
+
+
 def _append_logistics(logistics: str, pick_note: str, currency: str, config: dict, skus: list[str]) -> str:
+    """说明性拣货备注（非制单--/已制单--）整段追加到海外仓物流方式。"""
     rules = config.get("logistics_append") or {}
-    skip_prefixes = tuple(str(item) for item in (rules.get("skip_pick_note_prefixes") or ["制单"]))
+    skip_prefixes = tuple(str(item) for item in (rules.get("skip_pick_note_prefixes") or ["制单", "已制单"]))
     skip_currency = {str(item).upper() for item in (rules.get("skip_currency") or ["EUR", "欧元"])}
     deny_contains = [str(item) for item in (rules.get("deny_contains") or ["中国直发", "管家已建单"])]
-    allow_whole = [str(item) for item in (rules.get("allow_whole_contains") or ["移仓", "补发", "千红捷克仓已上架", "样品"])]
-    allow_tokens = {str(item) for item in (rules.get("allow_tokens") or ["分单", "样品", "USD", "CNY", "千红捷克仓已上架"])}
     text = _replace_channel(logistics, config)
-    note = pick_note.strip()
-    sku_tokens = {item.upper() for item in skus}
-    extras: list[str] = []
-    if note and not note.startswith(skip_prefixes):
-        if any(item in note for item in allow_whole) and not any(item in note for item in deny_contains):
-            extras.append(note)
-        else:
-            for token in note.split():
-                if any(item in token for item in deny_contains):
-                    continue
-                if token.upper() in sku_tokens or token.upper().startswith("WX") and token[2:].isdigit():
-                    continue
-                if token in allow_tokens:
-                    extras.append(token)
-    for extra in extras:
-        if extra not in text:
-            text = f"{text} {extra}".strip()
+    parts: list[str] = []
+    for line in (pick_note or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = line.strip()
+        if not line or _is_zhizhan_note_line(line, skip_prefixes):
+            continue
+        if any(item in line for item in deny_contains):
+            continue
+        parts.append(line)
+    extra = " ".join(parts).strip()
+    if extra and extra not in text:
+        text = f"{text} {extra}".strip()
     if currency and currency.upper() not in skip_currency and currency not in text.split():
         text = f"{text} {currency}".strip()
     return text
@@ -885,12 +928,13 @@ def _row_is_ebay(row: dict) -> bool:
 
 
 def _exclude_ebay_split_from_dian_01(partition: dict[str, list[dict]], anomalies: list[dict]) -> None:
-    """eBay 同一完整订单号多行（分单）：整单不进店管家01，改入审核并记加工说明短行。
+    """eBay 同一完整订单号多行，或备注含「分单」：整单不进店管家01，改入审核。
 
     按原 order_no 计数，不用截断后的原始单号。非 eBay 分单（店管家02 -1）不动。
     """
     d01 = partition.get("dian_01") or []
     counts: dict[str, int] = {}
+    noted: set[str] = set()
     for row in d01:
         if not _row_is_ebay(row):
             continue
@@ -898,7 +942,11 @@ def _exclude_ebay_split_from_dian_01(partition: dict[str, list[dict]], anomalies
         if not order_no:
             continue
         counts[order_no] = counts.get(order_no, 0) + 1
-    split_nos = {no for no, n in counts.items() if n > 1}
+        cells = row.get("cells") or {}
+        blob = " ".join(_text(cells.get(key)) for key in ("拣货备注", "客服备注", "订单备注"))
+        if "分单" in blob:
+            noted.add(order_no)
+    split_nos = {no for no, n in counts.items() if n > 1} | noted
     if not split_nos:
         return
     keep: list[dict] = []
@@ -1007,10 +1055,8 @@ def _write_xlsx(
     use_oversea_fill = style_mode == "oversea"
     fill_cfg = ((config or {}).get("oversea_fill") or {}) if use_oversea_fill else {}
 
-    # 行高：海外仓默认 25（与金标准 sheet_format 一致）；运营表显式每行 25
-    if style_mode == "oversea":
-        ws.sheet_format.defaultRowHeight = 25.0
-    else:
+    # 行高：海外仓与金标准人工表一致（defaultRowHeight=25 且 customHeight）；运营表显式每行 25
+    if style_mode != "oversea":
         ws.sheet_format.defaultRowHeight = 13.5
         ws.row_dimensions[1].height = 25
 
@@ -1047,6 +1093,9 @@ def _write_xlsx(
             cell.alignment = align
             if row_fill is not None:
                 cell.fill = row_fill
+
+    if style_mode == "oversea":
+        _apply_oversea_row_heights(ws, 1 + len(rows))
 
     widths = _column_widths_from_ref(width_ref, headers) if width_ref else _default_widths(headers, style_mode)
     for col, header in enumerate(headers, start=1):
@@ -1159,13 +1208,21 @@ def _write_xlsx_into_shell(
                 ws.cell(r_idx, col).value = None
 
     if style_mode == "oversea":
-        ws.sheet_format.defaultRowHeight = 25.0
+        _apply_oversea_row_heights(ws, 1 + len(rows))
 
     wb.save(path)
     wb.close()
     _patch_xlsx_empty_shared_strings(path)
     if use_oversea_fill:
         _patch_xlsx_oversea_theme(path)
+
+
+def _apply_oversea_row_heights(ws, last_row: int) -> None:
+    """海外仓行高对齐金标准人工表：sheet defaultRowHeight=25 且 customHeight，每行显式 25。"""
+    ws.sheet_format.defaultRowHeight = OVERSEA_ROW_HEIGHT
+    ws.sheet_format.customHeight = True
+    for r_idx in range(1, max(int(last_row), 1) + 1):
+        ws.row_dimensions[r_idx].height = OVERSEA_ROW_HEIGHT
 
 
 def _oversea_fill_theme(row: dict, fill_cfg: dict) -> tuple[int, str]:
@@ -1756,13 +1813,14 @@ def _dian_02_values(
     seq = seen_orders[base_no]
     order_no = base_no if seq == 1 else f"{base_no}-{seq - 1}"
 
+    source_logistics = _text(row.get("raw_logistics") or cells.get("物流方式"))
     logistics = _text(cells.get("物流方式"))
     tracking = "\n".join(row.get("tracking_nos") or _split_lines(cells.get("运单号")))
     package = _text(cells.get("包裹号"))
-    amazon = _is_amazon_logistics(logistics, config)
+    amazon = _is_amazon_logistics(source_logistics or logistics, config)
 
-    # 运单号口径（与 11.4 人工一致）：运单号=原表真实运单号；包裹号(XM…)只进包裹号列；
-    # 物流方式保持原文，不拼运单号。海外仓与店管家01/02 两条链路同规则。
+    # 店管家02 物流映射按原文物流，不受海外仓正本 Amazon 运单号/物流追加影响。
+    # 客户备注/物流单号仍用原运单号（tracking_nos 在正本改写前已保留）。
     if not tracking and package and anomalies_out is not None:
         item = {
             "type": "D02_TRACKING_EMPTY_PACKAGE_ONLY",
@@ -1777,14 +1835,14 @@ def _dian_02_values(
     cust = tracking
     service = logistics
 
-    # 店管家02「仓库」列故意留空；「物流方式」仍按 warehouse_logistics_map 填写
-    _wh_mapped, simple_log = _map_warehouse_logistics(logistics, config)
+    # 店管家02「仓库」列故意留空；「物流方式」仍按原文物流走 warehouse_logistics_map
+    _wh_mapped, simple_log = _map_warehouse_logistics(source_logistics, config)
     warehouse = ""
-    if logistics and not simple_log and anomalies_out is not None:
+    if source_logistics and not simple_log and anomalies_out is not None:
         item = {
             "type": "D02_WAREHOUSE_UNMAPPED",
             "order_no": order_no,
-            "message": f"物流方式未命中 warehouse_logistics_map：{logistics}",
+            "message": f"物流方式未命中 warehouse_logistics_map：{source_logistics}",
         }
         if excel_row is not None:
             item["excel_row"] = excel_row
@@ -1978,19 +2036,21 @@ def build_oversea_copy_rows(oversea_rows: list[dict], copy_order_nos: list[str])
     return out
 
 
-def _transform_oversea_copy_row(row: dict) -> dict:
-    """选中行：运单号=包裹号；物流方式后追加原运单号（非空且与包裹号不同）。"""
-    cells = dict(row)
+def _swap_tracking_to_package(cells: dict) -> None:
+    """运单号=包裹号；物流方式后追加原运单号（非空且与包裹号不同）。已含运单号则不重复追加。"""
     logistics = _text(cells.get("物流方式"))
     tracking = _text(cells.get("运单号"))
     package = _text(cells.get("包裹号"))
     if tracking and tracking != package and tracking not in logistics:
         cells["物流方式"] = f"{logistics} {tracking}".strip()
-    elif tracking and tracking != package and tracking in logistics:
-        # 已含运单号则不重复追加；仍改运单号
-        pass
     if package:
         cells["运单号"] = package
+
+
+def _transform_oversea_copy_row(row: dict) -> dict:
+    """选中行：运单号=包裹号；物流方式后追加原运单号（非空且与包裹号不同）。"""
+    cells = dict(row)
+    _swap_tracking_to_package(cells)
     return cells
 
 
