@@ -1,4 +1,5 @@
 import hashlib
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
@@ -15,6 +16,10 @@ from app.services.project1_runner import aggregate_status, convert_files
 from app.services.project2_runner import generate_oversea_copy_for_batch, reexport_project2_batch, run_project2_batch
 
 router = APIRouter(prefix="/api/batches", tags=["batches"])
+
+
+def _web_mode() -> bool:
+    return os.environ.get("ERP_UI_MODE", "").strip().lower() == "web"
 
 _MAX_BYTES = 30 * 1024 * 1024
 
@@ -376,6 +381,9 @@ def open_result_folder(
     db: Session = Depends(get_db),
 ) -> dict:
     """用资源管理器打开本批结果文件夹（不下载、不压缩）。"""
+    if _web_mode():
+        raise HTTPException(status_code=400, detail="网页版请点击「下载结果」，无法在服务器上打开文件夹")
+
     import subprocess
     import sys
 
@@ -402,6 +410,9 @@ def export_result_folder(
     db: Session = Depends(get_db),
 ) -> dict:
     """把结果文件夹整份复制到桌面或指定目录（普通文件夹，不打 zip）。"""
+    if _web_mode():
+        raise HTTPException(status_code=400, detail="网页版请点击「下载结果」，无法导出到服务器桌面")
+
     import json
     import shutil
     from datetime import datetime
