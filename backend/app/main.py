@@ -48,9 +48,18 @@ def create_app() -> FastAPI:
         if assets.is_dir():
             app.mount("/assets", StaticFiles(directory=str(assets)), name="assets")
 
+        def _index_page():
+            return FileResponse(
+                DIST_DIR / "index.html",
+                headers={
+                    "Cache-Control": "no-store, no-cache, must-revalidate",
+                    "Pragma": "no-cache",
+                },
+            )
+
         @app.get("/")
         def spa_root():
-            return FileResponse(DIST_DIR / "index.html")
+            return _index_page()
 
         @app.get("/{full_path:path}")
         def spa_fallback(full_path: str):
@@ -58,7 +67,7 @@ def create_app() -> FastAPI:
             candidate = DIST_DIR / full_path
             if full_path and candidate.is_file():
                 return FileResponse(candidate)
-            return FileResponse(DIST_DIR / "index.html")
+            return _index_page()
     else:
 
         @app.get("/")

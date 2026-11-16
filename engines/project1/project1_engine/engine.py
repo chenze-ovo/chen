@@ -128,7 +128,11 @@ def explain_issue(item: dict[str, Any], *, file_name: str = "") -> dict[str, Any
     if typ == "UNKNOWN_SKU_SUFFIX":
         suffix = str(item.get("suffix") or "").strip()
         if suffix:
-            row["action"] = {"type": "record_suffix", "suffix": suffix}
+            action = {"type": "record_suffix", "suffix": suffix}
+            sku = str(item.get("SKU") or item.get("sku") or "").strip()
+            if sku:
+                action["sku"] = sku
+            row["action"] = action
     elif typ == "UNKNOWN_SHOP":
         shop = str(item.get("店铺账号") or "").strip()
         if shop:
@@ -155,8 +159,8 @@ def _plain_words(typ: str, item: dict[str, Any], *, file_name: str = "") -> tupl
         else:
             problem = "货号带了系统不认识的后缀，已先剥成基础货号。"
         how = (
-            "如果确认应该去掉这个后缀，请点下面「记下这个后缀」。记下后再转一次，以后就不会再提示，店管家表也会正常出来。"
-            "如果这个后缀不该去掉，请改好原表货号再转一次。这几单暂时不要直接拿去导入。"
+            "如果确认应该去掉这个后缀，请点下面「记下这个后缀，以后都去掉」。"
+            "如果不是去掉，请在下面填正确货号再记下。记下后重新转一次就会按这个处理。"
         )
         return problem, how
 
@@ -179,7 +183,7 @@ def _plain_words(typ: str, item: dict[str, Any], *, file_name: str = "") -> tupl
             problem = "店铺账号不在已知名单里，需要确认是哪一类店。"
         how = (
             "请在下面选择这家店按哪一类处理：按亚马逊，或和其他店（eBay、Shirley）一样走店管家01。"
-            "选好后再转一次，就不会再提示，店管家表也会正常出来。这几单暂时不要直接拿去导入。"
+            "选好后再转一次，以后就不会再提示。"
         )
         return problem, how
 
@@ -391,7 +395,7 @@ def convert(input_path: Path, out_dir: Path, rules=None) -> dict[str, Any]:
     import_order_convert()
     from order_convert import convert_order_file
 
-    result = convert_order_file(Path(input_path), out_dir, rules=rules)
+    result = convert_order_file(Path(input_path), out_dir, rules=rules, write_formal_always=True)
     dx = str(result.dx_path.resolve()) if result.dx_path else None
     d01 = str(result.d01_path.resolve()) if result.d01_path else None
     d02 = str(result.d02_path.resolve()) if result.d02_path else None

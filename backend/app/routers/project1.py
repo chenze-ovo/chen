@@ -48,6 +48,11 @@ class ShopAllowBody(BaseModel):
     kind: Literal["amazon", "other"] = Field(..., description="amazon=按亚马逊处理；other=和其他店一样走店管家01")
 
 
+class SkuCorrectBody(BaseModel):
+    original_sku: str = Field(..., description="原来的货号")
+    corrected_sku: str = Field(..., description="用户填写的正确货号")
+
+
 def _safe_name(raw: str | None, index: int, used: set[str]) -> str:
     name = Path(raw or "").name.replace("\x00", "")
     if not name or name in {".", ".."}:
@@ -464,6 +469,25 @@ def record_shop(
     return {
         **public_allowlist(),
         "message": f"已记下店铺「{shop}」，{kind_label}。请再转一次订单，以后就不会再提示。",
+    }
+
+
+@router.post("/allowlist/sku")
+def record_sku(
+    body: SkuCorrectBody,
+    _user: User = Depends(require_roles("ops")),
+) -> dict:
+    from app.services.project1_allowlist import add_sku_correction, public_allowlist
+
+    try:
+        add_sku_correction(body.original_sku, body.corrected_sku)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    original = (body.original_sku or "").strip()
+    corrected = (body.corrected_sku or "").strip()
+    return {
+        **public_allowlist(),
+        "message": f"已记下货号「{original}」按「{corrected}」处理。请再转一次订单。",
     }
 
 

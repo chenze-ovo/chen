@@ -21,7 +21,7 @@ def allowlist_path() -> Path:
 
 
 def _empty() -> dict[str, Any]:
-    return {"sku_suffixes": [], "shops": []}
+    return {"sku_suffixes": [], "keep_suffixes": [], "sku_replacements": {}, "shops": []}
 
 
 def _norm_suffix(raw: str) -> str:
@@ -65,7 +65,22 @@ def load_allowlist() -> dict[str, Any]:
             shops = [row for row in shops if row["account"].lower() != key]
         seen.add(key)
         shops.append({"account": account, "kind": kind})
+    keep: list[str] = []
+    for item in loaded.get("keep_suffixes") or []:
+        value = _norm_suffix(str(item))
+        if value and value not in keep:
+            keep.append(value)
+    replacements: dict[str, str] = {}
+    raw_map = loaded.get("sku_replacements") or {}
+    if isinstance(raw_map, dict):
+        for key, value in raw_map.items():
+            src = str(key).strip()
+            dst = str(value).strip()
+            if src and dst:
+                replacements[src] = dst
     data["sku_suffixes"] = suffixes
+    data["keep_suffixes"] = keep
+    data["sku_replacements"] = replacements
     data["shops"] = shops
     return data
 
@@ -75,6 +90,8 @@ def save_allowlist(data: dict[str, Any]) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     cleaned = {
         "sku_suffixes": list(data.get("sku_suffixes") or []),
+        "keep_suffixes": list(data.get("keep_suffixes") or []),
+        "sku_replacements": dict(data.get("sku_replacements") or {}),
         "shops": list(data.get("shops") or []),
     }
     text = yaml.safe_dump(cleaned, allow_unicode=True, default_flow_style=False, sort_keys=False)
@@ -92,7 +109,8 @@ def add_suffix(suffix: str) -> dict[str, Any]:
     existing = {item.lower() for item in data["sku_suffixes"]}
     if value.lower() not in existing:
         data["sku_suffixes"].append(value)
-        save_allowlist(data)
+    data["keep_suffixes"] = [item for item in data.get("keep_suffixes") or [] if item.lower() != value.lower()]
+    save_allowlist(data)
     return data
 
 
@@ -110,6 +128,31 @@ def add_shop(shop_account: str, kind: str) -> dict[str, Any]:
     return data
 
 
+def add_sku_correction(original_sku: str, corrected_sku: str) -> dict[str, Any]:
+    original = str(original_sku or "").strip()
+    corrected = str(corrected_sku or "").strip()
+    if not original:
+        raise ValueError("缺少原来的货号，请在框里填写正确货号后再记下")
+    if not corrected:
+        raise ValueError("请填写正确货号")
+    data = load_allowlist()
+    replacements = dict(data.get("sku_replacements") or {})
+    replacements[original] = corrected
+    data["sku_replacements"] = replacements
+    if "-" in original:
+        suffix = original.rsplit("-", 1)[1]
+        kept = corrected == original or corrected.endswith("-" + suffix)
+        if suffix.isalpha() and kept:
+            keep = list(data.get("keep_suffixes") or [])
+            if suffix not in keep:
+                keep.append(suffix)
+            data["keep_suffixes"] = keep
+            # 若之前记下过“去掉”，这次改成保留，以保留为准
+            data["sku_suffixes"] = [item for item in data.get("sku_suffixes") or [] if item.lower() != suffix.lower()]
+    save_allowlist(data)
+    return data
+
+
 def merge_into_rules(rules: Any) -> Any:
     """把已记名单合并进 Rules，不写回 rules.yaml。"""
     data = load_allowlist()
@@ -121,6 +164,21 @@ def merge_into_rules(rules: Any) -> Any:
             suffixes.append(item)
             known.add(item)
     raw.setdefault("sku_suffixes", {})["strip"] = suffixes
+    keep = list((raw.get("sku_suffixes") or {}).get("keep") or [])
+    keep_known = {str(item) for item in keep}
+    for item in data.get("keep_suffixes") or []:
+        if item not in keep_known:
+            keep.append(item)
+            keep_known.add(item)
+        # 保留优先于去掉
+        suffixes = [row for row in suffixes if str(row) != item]
+    raw.setdefault("sku_suffixes", {})["strip"] = suffixes
+    raw.setdefault("sku_suffixes", {})["keep"] = keep
+    replacements = dict(raw.get("sku_replacements") or {})
+    for key, value in (data.get("sku_replacements") or {}).items():
+        if key and value:
+            replacements[key] = value
+    raw["sku_replacements"] = replacements
 
     shops = raw.setdefault("shops", {})
     amazon_known = [str(x).strip() for x in (shops.get("amazon_known") or []) if str(x).strip()]
@@ -158,4 +216,9 @@ def public_allowlist() -> dict[str, Any]:
     for item in data["shops"]:
         kind_label = "按亚马逊处理" if item["kind"] == "amazon" else "和其他店一样处理（店管家01）"
         shops.append({"account": item["account"], "kind": item["kind"], "kind_label": kind_label})
-    return {"sku_suffixes": data["sku_suffixes"], "shops": shops}
+    return {
+        "sku_suffixes": data["sku_suffixes"],
+        "keep_suffixes": data.get("keep_suffixes") or [],
+        "sku_replacements": data.get("sku_replacements") or {},
+        "shops": shops,
+    }

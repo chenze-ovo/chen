@@ -35,6 +35,25 @@ class Rules:
         return set(self.raw["sku_suffixes"]["strip"])
 
     @property
+    def keep_suffixes(self) -> set[str]:
+        """确认需要保留、不要剥掉的后缀。"""
+        block = self.raw.get("sku_suffixes") or {}
+        return set(str(x) for x in (block.get("keep") or []) if str(x).strip())
+
+    @property
+    def sku_replacements(self) -> dict[str, str]:
+        """按原货号精确替换成用户记下的正确货号。"""
+        raw = self.raw.get("sku_replacements") or {}
+        out: dict[str, str] = {}
+        if isinstance(raw, dict):
+            for key, value in raw.items():
+                src = str(key).strip()
+                dst = str(value).strip()
+                if src and dst:
+                    out[src] = dst
+        return out
+
+    @property
     def japan_suffix(self) -> str:
         return self.raw["sku_suffixes"]["japan"]["suffix"]
 

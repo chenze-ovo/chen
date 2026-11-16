@@ -135,7 +135,7 @@ def test_issue_brief_keeps_sku_and_suffix():
     assert "M0021-CQCD" in wording["problem"]
     assert "M0021" in wording["problem"]
     assert "记下这个后缀" in wording["how_to"]
-    assert wording.get("action") == {"type": "record_suffix", "suffix": "CQCD"}
+    assert wording.get("action") == {"type": "record_suffix", "suffix": "CQCD", "sku": "M0021-CQCD"}
     assert "UNKNOWN_SKU_SUFFIX" not in wording["problem"]
     assert "UNKNOWN_SKU_SUFFIX" not in wording["how_to"]
 

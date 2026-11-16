@@ -66,6 +66,7 @@ def convert_order_file(
     exports: Iterable[str] = ("dx", "d01", "d02"),
     write_sidecars: bool = True,
     allow_blocked_review_export: bool = False,
+    write_formal_always: bool = False,
 ) -> ConvertResult:
     """
     导出状态三分法：
@@ -284,9 +285,11 @@ def convert_order_file(
         if p.exists():
             p.unlink()
 
+    write_formal = write_formal_always or export_status == "ok"
+
     if hard_stop:
         pass  # 不写业务表
-    elif export_status == "ok":
+    elif write_formal:
         if "dx" in exports:
             result.dx_path = out_dir / "dianxiaomi.xlsx"
             _write_dx(result.dx_path)

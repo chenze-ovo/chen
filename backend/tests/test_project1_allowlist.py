@@ -102,7 +102,7 @@ def test_record_suffix_and_shop_then_dian_01(client, admin_headers):
     assert "记下这个后缀" in texts or any(item.get("action", {}).get("type") == "record_suffix" for item in _issues(detail))
     assert "record_shop" in types or "美客多" in texts
     downloads = {item.get("kind") for item in detail.get("downloads") or []}
-    assert "d01" not in downloads
+    assert "dx" in downloads
 
     suffix = client.post(
         "/api/project1/allowlist/suffix",
@@ -181,3 +181,67 @@ def test_zip_uses_chinese_names_and_drops_sidecars(tmp_path):
     with zipfile.ZipFile(io.BytesIO(payload)) as zf:
         names = set(zf.namelist())
     assert names == {"店小秘.xlsx", "店管家01.xls", "店管家02.xls", "异常说明.txt"}
+
+
+
+def test_unknown_suffix_still_downloads_dian(client, admin_headers):
+    content = _xlsx(
+        [
+            [
+                "C-1",
+                "亚马逊测试店",
+                "M0021-CQCD",
+                "云途",
+                "TRK3",
+                "",
+                1,
+                10,
+                "Ann",
+                "US",
+                "addr",
+                "1",
+                "1",
+            ]
+        ]
+    )
+    _batch_id, detail = _upload_and_run(client, admin_headers, content, name="suffix.xlsx")
+    kinds = {item.get("kind") for item in detail.get("downloads") or []}
+    assert "dx" in kinds
+    assert "d02" in kinds
+    assert any((item.get("action") or {}).get("suffix") == "CQCD" for item in _issues(detail))
+
+
+def test_record_correct_sku_then_no_suffix_issue(client, admin_headers):
+    content = _xlsx(
+        [
+            [
+                "D-1",
+                "亚马逊测试店",
+                "WX12054-HKCQ",
+                "云途",
+                "TRK4",
+                "",
+                1,
+                10,
+                "Ann",
+                "US",
+                "addr",
+                "1",
+                "1",
+            ]
+        ]
+    )
+    batch_id, detail = _upload_and_run(client, admin_headers, content, name="keep.xlsx")
+    assert any((item.get("action") or {}).get("suffix") == "HKCQ" for item in _issues(detail))
+    recorded = client.post(
+        "/api/project1/allowlist/sku",
+        headers=admin_headers,
+        json={"original_sku": "WX12054-HKCQ", "corrected_sku": "WX12054-HKCQ"},
+    )
+    assert recorded.status_code == 200, recorded.text
+    client.post("/api/project1/run", headers=admin_headers, json={"batch_id": batch_id})
+    detail = client.get(f"/api/project1/result/{batch_id}", headers=admin_headers).json()
+    texts = " ".join(item.get("problem", "") for item in _issues(detail))
+    assert "HKCQ" not in texts
+    kinds = {item.get("kind") for item in detail.get("downloads") or []}
+    assert "d02" in kinds

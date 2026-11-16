@@ -197,11 +197,18 @@ def _transform_one_sku(
       - 后缀含数字（如 020）→ 停止，保留为产品码一部分（避免 18MB-020 被剥成 18MB）
     别名（如 M00007→M0007）在调用方 apply_sku_aliases 中处理。
     """
+    replacements = getattr(rules, "sku_replacements", None) or {}
+    if sku in replacements:
+        mapped = replacements[sku]
+        return mapped, mapped
+
     working = sku
     while "-" in working:
         base, suf = working.rsplit("-", 1)
         if suf == rules.japan_suffix and rules.japan_note in note:
             return f"{base} {note}", base
+        if suf in getattr(rules, "keep_suffixes", set()):
+            break
         if suf in rules.strip_suffixes:
             working = base
             continue
