@@ -172,7 +172,7 @@ def _plain_words(typ: str, item: dict[str, Any], *, file_name: str = "") -> tupl
         elif sku:
             extra = f"（{sku}）"
         problem = f"这一单有多个货号{extra}，需要打开结果表核对货号和数量。"
-        how = "请打开结果表，核对每个货号和对应数量后再决定是否导入。这几单暂时不要直接拿去导入。"
+        how = "请先下载结果表，核对该单每个货号和数量对不对，核对完再决定要不要导入。这几单不要直接拿去导入。"
         return problem, how
 
     if typ == "UNKNOWN_SHOP":
@@ -210,7 +210,7 @@ def _plain_words(typ: str, item: dict[str, Any], *, file_name: str = "") -> tupl
             problem = f"这一单的产品总数无法识别（填写的是「{qty}」）。"
         else:
             problem = "这一单的产品总数是空的或无法识别。"
-        how = "请打开原表核对产品总数，改好后再转一次。"
+        how = "请打开原表改好这一单的产品总数，保存后再重新转一次。"
         return problem, how
 
     if typ == "INVALID_AMOUNT":
@@ -219,7 +219,7 @@ def _plain_words(typ: str, item: dict[str, Any], *, file_name: str = "") -> tupl
             problem = f"这一单的订单金额无法识别（填写的是「{amt}」）。"
         else:
             problem = "这一单的订单金额无法识别。"
-        how = "请打开原表核对订单金额，改好后再转一次。"
+        how = "请打开原表改好这一单的订单金额，保存后再重新转一次。"
         return problem, how
 
     if typ == "DUPLICATE_TRACKING":
@@ -228,7 +228,7 @@ def _plain_words(typ: str, item: dict[str, Any], *, file_name: str = "") -> tupl
             problem = f"运单号「{track}」和其他订单重复。"
         else:
             problem = "这一单的运单号和其他订单重复。"
-        how = "请打开原表核对运单号，改好后再转一次。这几单暂时不要直接拿去导入。"
+        how = "请打开原表核对并改好运单号，保存后再重新转一次。这几单不要直接拿去导入。"
         return problem, how
 
     if typ == "DUPLICATE_ORDER_NO":
@@ -266,7 +266,7 @@ def _plain_words(typ: str, item: dict[str, Any], *, file_name: str = "") -> tupl
         problem = msg
     else:
         problem = "转换时发现需要核对的问题。"
-    how = "请打开结果表核对该单，确认无误后再导入。"
+    how = "请先下载结果表，核对该单内容对不对，确认后再导入。"
     return problem, how
 
 
