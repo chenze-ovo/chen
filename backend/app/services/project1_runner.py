@@ -35,7 +35,17 @@ def project1_status() -> dict:
 
 def convert_files(paths: list[Path], out_dir: Path) -> dict:
     """逐个文件调用封装层，并把输出路径改成相对 data_dir。"""
-    summary = _engine().convert_files(list(paths), Path(out_dir))
+    rules = None
+    try:
+        from app.services.project1_allowlist import load_merged_rules
+
+        package = import_order_convert()
+        from order_convert.config import load_rules
+
+        rules = load_merged_rules(load_rules)
+    except Exception:
+        rules = None
+    summary = _engine().convert_files(list(paths), Path(out_dir), rules=rules)
     for item in summary.get("files", []):
         outputs = item.get("outputs") or {}
         item["outputs"] = {

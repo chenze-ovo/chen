@@ -131,7 +131,16 @@ def is_china_direct(raw: dict, rules: Rules) -> bool:
 
 
 def is_amazon(raw: dict, rules: Rules) -> bool:
-    return rules.amazon_keyword in str(raw.get("店铺账号") or "")
+    shop = str(raw.get("店铺账号") or "")
+    if rules.amazon_keyword and rules.amazon_keyword in shop:
+        return True
+    shop_l = shop.strip().lower()
+    if not shop_l:
+        return False
+    for key in rules.amazon_known:
+        if shop_l == str(key).strip().lower():
+            return True
+    return False
 
 
 def is_ebay(raw: dict) -> bool:

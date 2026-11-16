@@ -304,24 +304,9 @@ def download_batch_folder(
             db.commit()
         payload, filename = build_result_zip_bytes(out_dir, summary, batch_id=batch_id)
     else:
-        # project1: zip flat outputs dir (no nested folders required)
-        import io
-        import zipfile
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
+        from app.services.project1_export import build_project1_zip_bytes
 
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            if out_dir.is_dir():
-                for path in sorted(out_dir.rglob("*")):
-                    if not path.is_file():
-                        continue
-                    if path.name.startswith("_") or "_internal" in path.parts:
-                        continue
-                    zf.write(path, arcname=path.relative_to(out_dir).as_posix())
-        stamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
-        filename = f"店小秘加工结果-批次{batch_id}-{stamp}.zip"
-        payload = buf.getvalue()
+        payload, filename = build_project1_zip_bytes(out_dir, batch_id=batch_id)
 
     headers = {
         "Content-Disposition": f"attachment; filename*=UTF-8''{_url_quote(filename)}",
@@ -358,13 +343,24 @@ def get_result_folder(
             flag_modified(batch, "engine_summary")
             db.add(batch)
             db.commit()
-    files = sorted(
-        [
-            path.name
-            for path in out_dir.iterdir()
-            if path.is_file() and not path.name.startswith("_")
-        ]
-    )
+    from app.services.project1_export import is_internal_result_file, public_result_name
+
+    if batch.project == "project1":
+        files = sorted(
+            {
+                public_result_name(path)
+                for path in out_dir.rglob("*")
+                if path.is_file() and not is_internal_result_file(path)
+            }
+        )
+    else:
+        files = sorted(
+            [
+                path.name
+                for path in out_dir.iterdir()
+                if path.is_file() and not path.name.startswith("_")
+            ]
+        )
     return {
         "path": str(out_dir.resolve()),
         "batch_id": batch_id,
@@ -450,7 +446,7 @@ def export_result_folder(
         dest_root = Path(target_hint)
 
     stamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
-    label = "海外仓加工结果" if info.get("project") == "project2" else "店小秘加工结果"
+    label = "海外仓加工结果" if info.get("project") == "project2" else "中国直发加工结果"
     dest = dest_root / f"{label}-批次{batch_id}-{stamp}"
     # 若已存在则加序号
     base = dest
@@ -460,7 +456,12 @@ def export_result_folder(
         n += 1
     try:
         dest_root.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, dest, ignore=shutil.ignore_patterns("_internal", "_*", "*.pyc"))
+        if info.get("project") == "project1":
+            from app.services.project1_export import copy_project1_user_files
+
+            copy_project1_user_files(src, dest)
+        else:
+            shutil.copytree(src, dest, ignore=shutil.ignore_patterns("_internal", "_*", "*.pyc"))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"复制结果文件夹失败：{exc}") from exc
 

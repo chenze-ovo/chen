@@ -1719,3 +1719,23 @@ def test_d02_dedup_avoids_existing_minus_one(tmp_path):
     assert "SYNTH-MIX-BASE" in d02
     assert "SYNTH-MIX-BASE-1" in d02
     assert "SYNTH-MIX-BASE-2" in d02
+
+
+
+def test_amazon_known_exact_shop_goes_d02(tmp_path):
+    from order_convert.config import Rules, load_rules
+    from order_convert.transform import classify_dest, is_amazon
+
+    rules = load_rules()
+    raw = dict(rules.raw)
+    shops = dict(raw.get("shops") or {})
+    shops["amazon_known"] = ["香港星辉美客多（自营）"]
+    raw["shops"] = shops
+    rules = Rules(raw=raw)
+    row = {"店铺账号": "香港星辉美客多（自营）", "订单号": "X-1"}
+    assert is_amazon(row, rules) is True
+    assert classify_dest(row, rules, []) == "D02"
+    unknown = {"店铺账号": "完全陌生的店", "订单号": "X-2"}
+    anomalies = []
+    assert classify_dest(unknown, rules, anomalies) == "PENDING"
+    assert any(a.type == "UNKNOWN_SHOP" for a in anomalies)

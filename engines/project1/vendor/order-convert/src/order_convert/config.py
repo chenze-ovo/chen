@@ -107,8 +107,14 @@ class Rules:
         return self.raw["shops"]["amazon_keyword"]
 
     @property
+    def amazon_known(self) -> list[str]:
+        """额外按亚马逊处理的店铺账号（精确匹配，大小写不敏感）。"""
+        shops = self.raw.get("shops") or {}
+        return [str(x).strip() for x in (shops.get("amazon_known") or []) if str(x).strip()]
+
+    @property
     def d01_known(self) -> list[str]:
-        return list(self.raw["shops"]["d01_known"])
+        return list((self.raw.get("shops") or {}).get("d01_known") or [])
 
     @property
     def d02_fixed(self) -> dict[str, str]:

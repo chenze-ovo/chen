@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -36,6 +37,15 @@ _MAX_BYTES = 30 * 1024 * 1024
 
 class RunBody(BaseModel):
     batch_id: int = Field(..., description="upload 返回的批次 id")
+
+
+class SuffixAllowBody(BaseModel):
+    suffix: str = Field(..., description="要记下并以后自动去掉的货号后缀")
+
+
+class ShopAllowBody(BaseModel):
+    shop_account: str = Field(..., description="店铺账号")
+    kind: Literal["amazon", "other"] = Field(..., description="amazon=按亚马逊处理；other=和其他店一样走店管家01")
 
 
 def _safe_name(raw: str | None, index: int, used: set[str]) -> str:
@@ -411,3 +421,54 @@ def _ensure_notes_download(downloads: list, files_preview: list, data_dir: Path,
             )
             existing.add(notes)
     return out
+
+
+
+@router.get("/allowlist")
+def get_allowlist(_user: User = Depends(get_current_user)) -> dict:
+    from app.services.project1_allowlist import public_allowlist
+
+    return public_allowlist()
+
+
+@router.post("/allowlist/suffix")
+def record_suffix(
+    body: SuffixAllowBody,
+    _user: User = Depends(require_roles("ops")),
+) -> dict:
+    from app.services.project1_allowlist import add_suffix, public_allowlist
+
+    try:
+        add_suffix(body.suffix)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        **public_allowlist(),
+        "message": f"已记下后缀「{_clean_suffix(body.suffix)}」。请再转一次订单，以后就不会再提示。",
+    }
+
+
+@router.post("/allowlist/shop")
+def record_shop(
+    body: ShopAllowBody,
+    _user: User = Depends(require_roles("ops")),
+) -> dict:
+    from app.services.project1_allowlist import add_shop, public_allowlist
+
+    try:
+        add_shop(body.shop_account, body.kind)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    kind_label = "按亚马逊处理" if body.kind == "amazon" else "和其他店一样处理"
+    shop = body.shop_account.strip()
+    return {
+        **public_allowlist(),
+        "message": f"已记下店铺「{shop}」，{kind_label}。请再转一次订单，以后就不会再提示。",
+    }
+
+
+def _clean_suffix(raw: str) -> str:
+    value = (raw or "").strip()
+    if value.startswith("-"):
+        value = value[1:].strip()
+    return value

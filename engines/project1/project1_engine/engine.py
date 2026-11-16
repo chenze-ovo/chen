@@ -119,12 +119,21 @@ def explain_issue(item: dict[str, Any], *, file_name: str = "") -> dict[str, Any
     typ = str(item.get("type") or item.get("code") or "")
     order_no = str(item.get("订单号") or item.get("order_no") or "")
     problem, how_to = _plain_words(typ, item, file_name=file_name)
-    return {
+    row = {
         "订单号": order_no,
         "file": file_name,
         "problem": problem,
         "how_to": how_to,
     }
+    if typ == "UNKNOWN_SKU_SUFFIX":
+        suffix = str(item.get("suffix") or "").strip()
+        if suffix:
+            row["action"] = {"type": "record_suffix", "suffix": suffix}
+    elif typ == "UNKNOWN_SHOP":
+        shop = str(item.get("店铺账号") or "").strip()
+        if shop:
+            row["action"] = {"type": "record_shop", "shop": shop}
+    return row
 
 
 def _plain_words(typ: str, item: dict[str, Any], *, file_name: str = "") -> tuple[str, str]:
@@ -146,8 +155,8 @@ def _plain_words(typ: str, item: dict[str, Any], *, file_name: str = "") -> tupl
         else:
             problem = "货号带了系统不认识的后缀，已先剥成基础货号。"
         how = (
-            "请确认这个后缀要不要加进中国直发的白名单；确认后告诉我们，或改好原表货号再转一次。"
-            "这几单暂时不要直接拿去导入。"
+            "如果确认应该去掉这个后缀，请点下面「记下这个后缀」。记下后再转一次，以后就不会再提示，店管家表也会正常出来。"
+            "如果这个后缀不该去掉，请改好原表货号再转一次。这几单暂时不要直接拿去导入。"
         )
         return problem, how
 
@@ -168,7 +177,10 @@ def _plain_words(typ: str, item: dict[str, Any], *, file_name: str = "") -> tupl
             problem = f"店铺账号「{shop}」不在已知名单里，需要确认是哪一类店。"
         else:
             problem = "店铺账号不在已知名单里，需要确认是哪一类店。"
-        how = "请确认这家店是亚马逊还是其他已对接的店铺；确认后告诉我们。这几单暂时不要直接拿去导入。"
+        how = (
+            "请在下面选择这家店按哪一类处理：按亚马逊，或和其他店（eBay、Shirley）一样走店管家01。"
+            "选好后再转一次，就不会再提示，店管家表也会正常出来。这几单暂时不要直接拿去导入。"
+        )
         return problem, how
 
     if typ == "MISSING_COLUMNS":
@@ -372,14 +384,14 @@ def status() -> dict[str, Any]:
         }
 
 
-def convert(input_path: Path, out_dir: Path) -> dict[str, Any]:
+def convert(input_path: Path, out_dir: Path, rules=None) -> dict[str, Any]:
     """单文件转换，返回状态、统计、告警摘要与三表路径（绝对路径字符串）。"""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     import_order_convert()
     from order_convert import convert_order_file
 
-    result = convert_order_file(Path(input_path), out_dir)
+    result = convert_order_file(Path(input_path), out_dir, rules=rules)
     dx = str(result.dx_path.resolve()) if result.dx_path else None
     d01 = str(result.d01_path.resolve()) if result.d01_path else None
     d02 = str(result.d02_path.resolve()) if result.d02_path else None
@@ -417,7 +429,7 @@ def convert(input_path: Path, out_dir: Path) -> dict[str, Any]:
     }
 
 
-def convert_files(paths: list[Path], out_dir: Path) -> dict[str, Any]:
+def convert_files(paths: list[Path], out_dir: Path, rules=None) -> dict[str, Any]:
     """逐个文件调用引擎。单个失败不影响其他文件。"""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -425,7 +437,7 @@ def convert_files(paths: list[Path], out_dir: Path) -> dict[str, Any]:
     for path in paths:
         target = out_dir / Path(path).stem
         try:
-            files.append(convert(Path(path), target))
+            files.append(convert(Path(path), target, rules=rules))
         except Exception as exc:
             files.append(
                 {

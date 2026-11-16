@@ -72,6 +72,8 @@ sku_append_to_logistics:
 
 shops:
   amazon_keyword: "亚马逊"
+  # 额外按亚马逊处理的店铺账号（精确匹配；不含「亚马逊」二字的店可写在这里）
+  amazon_known: []
   # 进入店管家01 的已知非亚马逊店铺（子串匹配，大小写不敏感）
   d01_known:
     - ebay
