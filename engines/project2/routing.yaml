@@ -125,8 +125,8 @@ dian_02_field_map:
   订单来源: "手工建单"
   店铺: 店铺账号
   客服备注: logistics_or_amazon_plus_tracking
-  客户备注: tracking_or_package_for_amazon
-  物流单号: tracking_or_package_for_amazon
+  客户备注: oversea_tracking_no
+  物流单号: oversea_tracking_no
   仓库: ""  # 故意留空，导出不写
   物流方式: warehouse_logistics_map
   自定义1: date_seq  # YY + M + D + 001 递增，按导出顺序
@@ -139,8 +139,8 @@ d02_rules:
   amazon_logistics_prefixes:
     - "Amazon FBA"
     - "Amazon-"
-  # 客服备注：默认=海外仓物流方式；若物流以 Amazon 开头则追加运单号
-  # 客户备注/物流单号：默认=运单号；Amazon 物流则用包裹号
+  # 客服备注：与海外仓「物流方式」相同（Amazon 时已是原物流+原运单号）
+  # 客户备注/物流单号：与海外仓「运单号」相同（Amazon 为包裹号，非 Amazon 为真实运单号）
   custom1_format: "{yy}{month}{day}{seq:03d}"  # 月日不补零，如 26104001
   order_source: 手工建单
   unmatched_warehouse_action: report  # 仓库故意空不报；物流映射不到仍报 D02_WAREHOUSE_UNMAPPED

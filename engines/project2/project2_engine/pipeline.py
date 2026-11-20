@@ -2041,24 +2041,11 @@ def _dian_02_values(
 
     source_logistics = _text(row.get("raw_logistics") or cells.get("物流方式"))
     logistics = _text(cells.get("物流方式"))
-    tracking = "\n".join(row.get("tracking_nos") or _split_lines(cells.get("运单号")))
-    package = _text(cells.get("包裹号"))
-    amazon = _is_amazon_logistics(source_logistics or logistics, config)
-
-    # 店管家02 物流映射按原文物流，不受海外仓正本 Amazon 运单号/物流追加影响。
-    # 客户备注/物流单号仍用原运单号（tracking_nos 在正本改写前已保留）。
-    if not tracking and package and anomalies_out is not None:
-        item = {
-            "type": "D02_TRACKING_EMPTY_PACKAGE_ONLY",
-            "order_no": order_no,
-            "message": f"运单号为空，只有包裹号 {package}；不用包裹号顶运单号，待补真实运单号。",
-        }
-        if excel_row is not None:
-            item["excel_row"] = excel_row
-        if file_name:
-            item["file"] = file_name
-        anomalies_out.append(item)
-    cust = tracking
+    # 客户备注/物流单号与同一行海外仓「运单号」相同：Amazon 为正本改写后的包裹号，非 Amazon 为真实运单号。
+    # 客服备注仍用海外仓物流方式（Amazon 时已是原物流+原运单号），不要改。
+    # 店管家02 物流映射仍按原文物流，不受海外仓正本改写影响。
+    oversea_tracking = _text(cells.get("运单号"))
+    cust = oversea_tracking
     service = logistics
 
     # 店管家02「仓库」列故意留空；「物流方式」仍按原文物流走 warehouse_logistics_map

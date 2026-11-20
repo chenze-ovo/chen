@@ -84,8 +84,16 @@ def test_amazon_oversea_swaps_tracking_and_d02_maps_source_logistics():
         row, cfg, {}, custom1="26113001", anomalies_out=[], order_counts={"AMZ-1": 1}
     )
     assert values["物流方式"] == "亚马逊FBA德国"
-    assert values["客户备注"] == "960D21340391F"
-    assert values["物流单号"] == "960D21340391F"
+    assert values["仓库"] == ""
+    # 客户备注/物流单号与海外仓运单号相同（包裹号），不再写被追加到物流方式里的原运单号
+    assert values["客户备注"] == "XM68AXJ07979"
+    assert values["物流单号"] == "XM68AXJ07979"
+    assert values["客户备注"] == row["cells"]["运单号"]
+    assert values["客户备注"] != "960D21340391F"
+    # 客服备注仍与海外仓物流方式相同（原物流+原运单号）
+    assert values["客服备注"] == row["cells"]["物流方式"]
+    assert values["客服备注"].startswith(source_logistics)
+    assert values["客服备注"].endswith("960D21340391F")
 
 
 def test_amazon_skips_append_when_tracking_equals_package():
@@ -101,6 +109,31 @@ def test_amazon_skips_append_when_tracking_equals_package():
     assert "XM68AXJ09011" not in (row["cells"]["物流方式"].replace(row["cells"]["包裹号"], ""))
     # 运单号等于包裹号时不往物流方式里再追加
     assert not row["cells"]["物流方式"].endswith("XM68AXJ09011") or row["cells"]["物流方式"].count("XM68AXJ09011") == 0
+
+
+def test_non_amazon_d02_customer_note_matches_oversea_tracking():
+    cfg = _cfg()
+    raw = _raw(
+        订单号="DE-1",
+        物流方式="谷仓仓储-鑫赢科技-捷克仓-DHL德国派送",
+        运单号="DE6075797597",
+        包裹号="XM68AXJ70552",
+        币种缩写="EUR",
+        拣货备注="",
+    )
+    row = _prepare_row(raw, cfg, [], None, set(), {}, [])
+    # 非 Amazon：海外仓运单号仍是真实运单号，不改成包裹号
+    assert row["cells"]["运单号"] == "DE6075797597"
+    assert "DE6075797597" not in (row["cells"]["物流方式"] or "")
+    values = _dian_02_values(
+        row, cfg, {}, custom1="26113002", anomalies_out=[], order_counts={"DE-1": 1}
+    )
+    assert values["客户备注"] == "DE6075797597"
+    assert values["物流单号"] == "DE6075797597"
+    assert values["客户备注"] == row["cells"]["运单号"]
+    assert values["客户备注"] != "XM68AXJ70552"
+    assert values["客服备注"] == row["cells"]["物流方式"]
+    assert "DE6075797597" not in values["客服备注"]
 
 
 def test_china_direct_keeps_source_amount_not_price_or_zero_d02_backfills():
