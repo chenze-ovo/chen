@@ -4,7 +4,7 @@
 店管家正式 xls 用模板/金标准壳填写；02：copy 金标准壳 + xlutils 只改 cell 值并复用原 XF，再 set_colour_RGB(26→#F2DCDB) 保证 Excel/WPS 粉底粉（禁止 soffice 转 xlsx/xls，禁止刷 #FFFFCC 黄）。海外仓/运营有 identical_refs 壳时复制壳填数（保留 theme/CF/列宽）。无壳才新建并补 theme1。店管家02合计：拆单未填/中国直发未匹配→留空进审核，禁止海外仓金额顶、按比例猜、写0冒充。
 
 海外仓正本 Amazon：运单号=包裹号；物流方式=现物流+(原运单号非空且≠包裹号时追加)。店管家02 映射仍按原文物流。
-中国直发M00016 仍留海外仓表，订单金额保留源表原值（不改 0、不回填订单价格）；店管家02合计只用第2步金额原件回填这类单。其他中国直发不进店管家02，金额原件也不改02里其他行的价格。
+中国直发物流（新云途/FBA SHIP/FBM SHIP/AMZ渠道/美客多线上/速卖通线上/eBay线上/泰嘉物流）不进海外仓表；店管家02合计用第2步金额原件回填。真正的海外仓物流（谷仓/Techilife/Amazon FBA 仓发等）即使备注含中国直发M00016仍留海外仓，价格不改。
 海外仓行高与金标准人工表一致：defaultRowHeight=25 且 customHeight。
 海外仓副本（oversea_copy.mode=selected_orders）：仅当 copy_order_nos 非空时独立导出选中订单行；
 规则 append_old_tracking_to_logistics + tracking=package_no。禁止再写全量隐藏行凑数。
@@ -110,7 +110,7 @@ def process_orders(
             date_full=date_full, date_short=date_short
         )
         oversea = out_dir / oversea_name
-        oversea_rows = [row["cells"] for row in routed]
+        oversea_rows = [row["cells"] for row in routed if not row.get("skip_oversea")]
         oversea_ref = identical_refs.get("oversea")
         if oversea_ref:
             oversea_rows = _reorder_like_ref(oversea_rows, Path(oversea_ref))
@@ -586,11 +586,13 @@ def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict
     amount = _decimal(original_amount)
     china = _is_china_direct(cells, config)
     china_m00016 = _is_china_direct_m00016(cells, config)
+    china_direct_logistics = _is_china_direct_logistics(_text(raw_logistics) or _text(cells.get("物流方式")), config)
+    skip_oversea = _should_skip_oversea(cells, raw_logistics, config)
+    needs_backfill = _needs_d02_amount_backfill(cells, raw_logistics, config)
     matched = False
-    # 第2步金额原件只给「中国直发M00016 海外仓发产品」回填店管家02合计，不改海外仓价格，也不改02里其他行
-    if china_m00016:
+    # 第2步金额原件只给中国直发物流 / M00016 回填店管家02合计，不改海外仓价格，也不改02里其他普通行
+    if needs_backfill:
         if order_no in same_day:
-            # 匹配金额只进内部 amount / amount_matched，供店管家02合计；海外仓正本 cells 订单金额保持原值
             amount = same_day[order_no]
             matched = True
         else:
@@ -599,10 +601,15 @@ def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict
                     "type": "CHINA_DIRECT_AMOUNT_UNMATCHED",
                     "task_type": "china_direct_amount_unmatched",
                     "order_no": order_no,
-                    "message": "中国直发M00016未匹配店小秘或金额原件：店管家02合计留空并进审核；禁止写0，禁止用海外仓金额顶上。",
+                    "message": "中国直发未匹配店小秘或金额原件：店管家02合计留空并进审核；禁止写0，禁止用海外仓金额顶上。",
                 }
             )
-    if _is_other_china_direct(cells, config) and destination == "dian_02":
+    # 海外仓物流行上「其他中国直发」备注仍不进店管家02；中国直发物流行可以进02
+    if (
+        _is_other_china_direct(cells, config)
+        and _is_oversea_warehouse_logistics(_text(raw_logistics) or _text(cells.get("物流方式")), config)
+        and destination == "dian_02"
+    ):
         destination = "oversea_only"
     if unknown_suffix:
         destination = "human_review"
@@ -649,8 +656,11 @@ def _prepare_row(raw: dict, config: dict, shops: list[dict], sku_maps: list[dict
         "already": already,
         "ops_group": _ops_group_for(original_shop, note, config, shops, shop),
         "ops_cells": ops_cells,
-        "china_direct": china,
+        "china_direct": china or china_direct_logistics,
         "china_direct_m00016": china_m00016,
+        "china_direct_logistics": china_direct_logistics,
+        "skip_oversea": skip_oversea,
+        "d02_amount_backfill": needs_backfill,
         "amount_matched": matched,
     }
 
@@ -804,8 +814,8 @@ def _shop_from_note(
 
     不要求备注必须有「---」。客服备注若本身是短店名则优先；
     否则在客服/拣货/订单备注里做已知店名最长匹配，或抽取末尾含「店」的短语、--- 后的店名。
-    整段说明、「制单--」运单、中国直发说明不能当店名；认不出则保持手工订单。
-    非手工订单仍保留旧规则：拣货备注里 --- 后面的店名优先。
+    整段说明、「制单-- / 制单---」运单、中国直发说明不能当店名；认不出则保持手工订单。
+    非手工订单仅在去掉制单运单后仍有「---店名」时才改写店铺；制单---运单号不能覆盖已有真实店名。
     """
     shop = _text(cells.get("店铺账号"))
     order_no = _text(cells.get("订单号"))
@@ -843,9 +853,11 @@ def _shop_from_note(
                 return extracted
         return shop
 
-    if "---" not in (note or ""):
+    # 先去掉「制单-- / 已制单-- / 制单---」运单，避免把运单号当成店名
+    cleaned = _strip_tracking(note or "")
+    if "---" not in cleaned:
         return shop
-    tail = note.split("---")[-1].strip()
+    tail = cleaned.split("---")[-1].strip()
     if not tail or tail.startswith("-"):
         anomalies.append(
             {
@@ -908,20 +920,19 @@ def _sku_from_note(sku: str, note: str, config: dict) -> str:
 
 
 def _fill_tracking(cells: dict, note: str, config: dict) -> None:
-    """从拣货备注抽运单号：已有运单号不覆盖；制单--/已制单-- 后到换行前整段。"""
+    """从拣货备注抽运单号：已有运单号不覆盖；制单--/已制单--/制单--- 后到换行前整段。"""
     if _text(cells.get("运单号")):
         return
-    import re
-
     pattern = str(
         (config.get("tracking_from_note") or {}).get("pattern")
-        or r"(?:已)?制单--([^\r\n]+)"
+        or r"(?:已)?制单--+([^\r\n]+)"
     )
     matched = re.search(pattern, note or "")
     if matched:
-        value = matched.group(1).strip()
+        value = matched.group(1).strip().lstrip("-").strip()
         if value:
             cells["运单号"] = value
+
 
 
 def _ops_excluded(note: str, config: dict) -> bool:
@@ -1099,26 +1110,107 @@ def _is_china_direct_m00016(cells: dict, config: dict) -> bool:
 
 
 def _is_other_china_direct(cells: dict, config: dict) -> bool:
-    """含「中国直发」但不是「中国直发M00016 海外仓发产品」：不进店管家02。"""
+    """含「中国直发」但不是「中国直发M00016 海外仓发产品」。"""
     return _is_china_direct(cells, config) and not _is_china_direct_m00016(cells, config)
 
 
+_FBX_SHIP_RE = re.compile(r"FB[AM]\s*SHIP", re.IGNORECASE)
+# AMZ 作为独立渠道标记（-AMZ、AMZ云途），不要匹配 Amazon 中的字母
+_AMZ_TOKEN_RE = re.compile(r"(?<![A-Za-z])AMZ(?![A-Za-z])", re.IGNORECASE)
+_EBAY_ONLINE_RE = re.compile(r"ebay\s*线上", re.IGNORECASE)
+_MERCADO_RE = re.compile(r"mercado", re.IGNORECASE)
+_DEFAULT_CHINA_DIRECT_LOGISTICS = ("新云途", "美客多线上", "速卖通线上", "泰嘉物流")
+_DEFAULT_OVERSEA_WAREHOUSE = (
+    "谷仓",
+    "Techilife",
+    "techlife",
+    "TECHILIFE",
+    "Techlife",
+    "运德海外仓",
+    "壹合美国仓",
+    "世盖易",
+    "万欣S2C",
+    "Logistar",
+)
+
+
+def _row_logistics(cells: dict, raw_logistics=None) -> str:
+    return _text(raw_logistics) or _text((cells or {}).get("物流方式"))
+
+
+def _is_china_direct_logistics(logistics: str, config: dict | None = None) -> bool:
+    """按物流方式识别中国直发，不要求备注里必须有「中国直发」。"""
+    text = _text(logistics)
+    if not text:
+        return False
+    if _FBX_SHIP_RE.search(text) or _AMZ_TOKEN_RE.search(text) or _EBAY_ONLINE_RE.search(text):
+        return True
+    if _MERCADO_RE.search(text) and "线上" in text:
+        return True
+    needles = _config_needles(config or {}, "logistics_contains", list(_DEFAULT_CHINA_DIRECT_LOGISTICS))
+    folded = text.casefold()
+    return any(str(n).casefold() in folded for n in needles)
+
+
+def _is_oversea_warehouse_logistics(logistics: str, config: dict | None = None) -> bool:
+    """真正的海外仓物流：谷仓/Techilife/Amazon FBA 仓发等，且不是上面的直发渠道。"""
+    text = _text(logistics)
+    if not text:
+        return False
+    cfg = config or {}
+    if _is_china_direct_logistics(text, cfg):
+        return False
+    if _is_amazon_logistics(text, cfg):
+        return True
+    needles = _config_needles(cfg, "oversea_warehouse_contains", list(_DEFAULT_OVERSEA_WAREHOUSE))
+    folded = text.casefold()
+    return any(str(n).casefold() in folded for n in needles)
+
+
+def _should_skip_oversea(cells: dict, raw_logistics, config: dict | None = None) -> bool:
+    """中国直发物流，或备注含中国直发但物流不是海外仓渠道：不进海外仓表。"""
+    cfg = config or {}
+    logistics = _row_logistics(cells, raw_logistics)
+    if _is_china_direct_logistics(logistics, cfg):
+        return True
+    if _is_china_direct(cells, cfg) and not _is_oversea_warehouse_logistics(logistics, cfg):
+        return True
+    return False
+
+
+def _needs_d02_amount_backfill(cells: dict, raw_logistics, config: dict | None = None) -> bool:
+    """店管家02合计需用第2步金额原件回填的行。"""
+    cfg = config or {}
+    if _is_china_direct_m00016(cells, cfg):
+        return True
+    logistics = _row_logistics(cells, raw_logistics)
+    if _is_china_direct_logistics(logistics, cfg):
+        return True
+    if _is_china_direct(cells, cfg) and not _is_oversea_warehouse_logistics(logistics, cfg):
+        return True
+    return False
+
+
 def _exclude_other_china_direct_from_dian_02(partition: dict[str, list[dict]], anomalies: list[dict], config: dict) -> None:
-    """原表或第2步金额表里的其他中国直发单不进店管家02，也不因此新增02行。"""
+    """海外仓物流行上「其他中国直发」备注不进店管家02。中国直发物流行可以进02。"""
     rules = config.get("china_direct") or {}
     if rules.get("exclude_other_from_dian_02", True) is False:
         return
     keep: list[dict] = []
     for row in partition.get("dian_02") or []:
         cells = row.get("cells") or {}
-        if _is_other_china_direct(cells, config):
+        logistics = _row_logistics(cells, row.get("raw_logistics"))
+        if _is_china_direct_logistics(logistics, config):
+            keep.append(row)
+            continue
+        if _is_other_china_direct(cells, config) and _is_oversea_warehouse_logistics(logistics, config):
             row["destination"] = "oversea_only"
             anomalies.append(
                 {
                     "type": "CHINA_DIRECT_OTHER_SKIP_D02",
                     "order_no": _text(row.get("order_no")),
                     "file": "店管家02.xls",
-                    "message": "其他中国直发（非「中国直发M00016 海外仓发产品」）不进店管家02，仍留海外仓表。",
+                    "message": "海外仓物流行备注为其他中国直发（非「中国直发M00016 海外仓发产品」）不进店管家02，仍留海外仓表。",
                 }
             )
             continue
@@ -2129,14 +2221,17 @@ def _d02_total_amount(
 ):
     """店管家02「合计」。
 
-    - 「中国直发M00016 海外仓发产品」：仅用店小秘/金额原件回填；匹配不到→留空+审核，不写0、不用海外仓金额。
+    - 中国直发物流或「中国直发M00016 海外仓发产品」：仅用店小秘/金额原件回填；匹配不到→留空+审核，不写0、不用海外仓金额。
     - 拆单（同订单号多行）且无 manual_sku_amount：留空+审核，禁止按比例猜、禁止用海外仓总额顶。
     - 其余：有明确非零金额才写入；金额为 0 写成空（禁止写出 0 / 0.0）。第2步金额表不改这些行的合计。
     """
-    if "china_direct_m00016" in row:
-        china = bool(row.get("china_direct_m00016"))
+    if "d02_amount_backfill" in row:
+        china = bool(row.get("d02_amount_backfill"))
+    elif "china_direct_m00016" in row:
+        china = bool(row.get("china_direct_m00016") or row.get("china_direct_logistics"))
     else:
-        china = _is_china_direct_m00016(row.get("cells") or {}, {})
+        cells_for_bf = row.get("cells") or {}
+        china = _needs_d02_amount_backfill(cells_for_bf, row.get("raw_logistics"), {})
     matched = bool(row.get("amount_matched"))
     base_no = _text(row.get("order_no"))
     is_split = bool(base_no) and int(order_counts.get(base_no) or 0) > 1
@@ -2159,6 +2254,16 @@ def _d02_total_amount(
                 item["file"] = file_name
             anomalies_out.append(item)
         return ""
+
+    if china and matched:
+        amount = row.get("amount")
+        if amount is None:
+            amount = (row.get("cells") or {}).get("订单金额")
+        if amount not in (None, ""):
+            try:
+                return float(str(amount).strip())
+            except (TypeError, ValueError):
+                return amount
 
     if is_split and manual in (None, ""):
         if anomalies_out is not None:

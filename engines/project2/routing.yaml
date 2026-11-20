@@ -157,12 +157,29 @@ d01_field_rules:
     禁止把项目1的列映射原样抄进项目2引擎。模板文件未到，不阻塞 Phase 0。
 
 # 项目2中国直发：禁止把金额改成 0，也不改成项目1的 M00016。
-# 备注含「中国直发」的行仍可留在海外仓表；只有「中国直发M00016 海外仓发产品」才进店管家02并用金额原件回填合计。
+# 中国直发物流不进海外仓表，可进店管家02并用第2步金额原件回填合计。
+# 真正的海外仓物流（谷仓/Techilife/Amazon FBA 仓发）即使备注含 M00016 仍留海外仓，价格不改。
 china_direct:
   note_contains:
     - 中国直发
   d02_backfill_note_contains:
     - 中国直发M00016 海外仓发产品
+  logistics_contains:
+    - 新云途
+    - 美客多线上
+    - 速卖通线上
+    - 泰嘉物流
+  oversea_warehouse_contains:
+    - 谷仓
+    - Techilife
+    - techlife
+    - TECHILIFE
+    - Techlife
+    - 运德海外仓
+    - 壹合美国仓
+    - 世盖易
+    - 万欣S2C
+    - Logistar
   exclude_other_from_dian_02: true
   force_zero: false
   replace_sku: false
@@ -174,11 +191,12 @@ china_direct_amounts:
   d02_total_on_no_match: empty
   review_task_type: china_direct_amount_unmatched
   note: >
-    「中国直发M00016 海外仓发产品」仍留海外仓表；海外仓正本订单金额保留源表原值，
-    不要改成 0，也不要回填成订单价格，不套用项目1的合计0/M00016规则。
-    第2步店小秘/金额原件只给这类单回填店管家02「合计」；对不上则合计留空并进加工说明。
-    含「中国直发」但不是这类文案的其他直发单，不进店管家02。
-    金额原件里的其他单号不改02里非这类单的价格，也不因此往02加行。
+    新云途、FBA SHIP、FBM SHIP、AMZ渠道、美客多线上、速卖通线上、eBay线上、泰嘉物流
+    不进海外仓表；店管家02合计只用第2步店小秘/金额原件回填，对不上则留空并进加工说明。
+    谷仓/Techilife/Amazon FBA 仓发等海外仓物流即使备注含「中国直发M00016 海外仓发产品」
+    仍留海外仓表，订单金额保留源表原值，不改 0、不回填订单价格。
+    海外仓物流行上其他「中国直发」备注仍不进店管家02。
+    金额原件里的其他非直发单号不改02里普通行的价格。
 
 # 拆分 SKU 金额：员工看店小秘网页后手工录入。
 logistics_append:
@@ -219,8 +237,8 @@ manual_shop_rules:
     shop_from_column: "客服备注"
 
 tracking_from_note:
-  # 拣货备注：去掉「制单-- / 已制单--」后，取到换行前的整段运单号
-  pattern: '(?:已)?制单--([^\r\n]+)'
+  # 拣货备注：去掉「制单-- / 已制单-- / 制单---」后，取到换行前的整段运单号
+  pattern: '(?:已)?制单--+([^\r\n]+)'
 
 ops_exclude_note_contains:
   - 中国直发M00016

@@ -148,6 +148,8 @@ def test_china_direct_keeps_source_amount_not_price_or_zero_d02_backfills():
     same_day = {"303-9011940-1431562": Decimal("36.5")}
     row = _prepare_row(raw, cfg, [], None, set(), same_day, [])
     assert row["china_direct"] is True
+    assert row["china_direct_m00016"] is True
+    assert row["skip_oversea"] is False
     assert row["amount_matched"] is True
     assert row["amount"] == Decimal("36.5")
     assert float(row["cells"]["订单金额"]) == 18.8
@@ -493,6 +495,7 @@ def test_other_china_direct_stays_oversea_but_not_in_dian_02():
     assert m00016["china_direct_m00016"] is True
     assert float(m00016["cells"]["订单金额"]) == 18.8
     assert other["destination"] == "oversea_only"
+    assert other["skip_oversea"] is False
     assert other["china_direct"] is True
     assert other["china_direct_m00016"] is False
     assert float(other["cells"]["订单金额"]) == 12
@@ -618,10 +621,10 @@ def test_amount_file_other_china_direct_does_not_add_dian_02_rows():
     assert "M-1" in d02_nos
     assert "N-1" in d02_nos
     assert "O-1" not in d02_nos
-    assert "D-1" not in d02_nos
+    assert "D-1" in d02_nos
     assert by_no["O-1"]["destination"] == "oversea_only"
-    assert by_no["D-1"]["destination"] == "oversea_only"
-    assert summary["stats"]["dian_02"] == 2
+    assert by_no["D-1"]["destination"] == "dian_02"
+    assert summary["stats"]["dian_02"] == 3
 
     oversea = next(item for item in summary["downloads"] if item["kind"] == "oversea")
     book = load_workbook(out_dir / oversea["path"])
@@ -635,6 +638,7 @@ def test_amount_file_other_china_direct_does_not_add_dian_02_rows():
     assert float(amounts_by_no["M-1"]) == 18.8
     assert float(amounts_by_no["O-1"]) == 12
     assert "O-1" in amounts_by_no
+    assert "D-1" not in amounts_by_no
 
     # 用准备后的行核对02合计：M-1 回填 36.5，N-1 保持原表 10，不被金额原件 999 改掉
     m_row = _prepare_row(
@@ -662,6 +666,253 @@ def test_unmatched_m00016_d02_total_left_empty():
     total = _d02_total_amount(row, row["cells"], order_counts={"M-2": 1}, anomalies_out=anoms, order_no="M-2")
     assert total == ""
     assert any(item.get("reason") == "china_direct_unmatched" for item in anoms)
+
+
+
+
+def test_xinyuntu_china_direct_skips_oversea_but_backfills_d02():
+    cfg = _cfg()
+    same_day = {"303-2768442-9058769-1": Decimal("42.3")}
+    direct = _prepare_row(
+        _raw(
+            订单号="303-2768442-9058769-1",
+            物流方式="新云途-云途全球专线挂号（特惠普货）",
+            拣货备注="中国直发M00016 海外仓发产品---亚马逊香港创趣欧洲（自营）",
+            订单金额=18.8,
+        ),
+        cfg, [], None, set(), same_day, [],
+    )
+    warehouse = _prepare_row(
+        _raw(
+            订单号="303-2768442-9058769-1",
+            物流方式="谷仓仓储-深圳承恩-捷克仓-CZ_OC_Parcel",
+            拣货备注="中国直发M00016 海外仓发产品---亚马逊香港创趣欧洲（自营）",
+            订单金额=18.8,
+        ),
+        cfg, [], None, set(), same_day, [],
+    )
+    assert direct["skip_oversea"] is True
+    assert direct["china_direct_logistics"] is True
+    assert direct["destination"] == "dian_02"
+    assert float(direct["cells"]["订单金额"]) == 18.8
+    assert _d02_total_amount(
+        direct, direct["cells"], order_counts={"303-2768442-9058769-1": 2}, anomalies_out=[], order_no="303-2768442-9058769-1"
+    ) == 42.3
+
+    assert warehouse["skip_oversea"] is False
+    assert warehouse["china_direct_logistics"] is False
+    assert warehouse["china_direct_m00016"] is True
+    assert warehouse["destination"] == "dian_02"
+    assert float(warehouse["cells"]["订单金额"]) == 18.8
+
+    part = _partition([direct, warehouse], [])
+    _exclude_other_china_direct_from_dian_02(part, [], cfg)
+    d02_logs = {row.get("raw_logistics") or row["cells"]["物流方式"] for row in part["dian_02"]}
+    assert any("新云途" in item for item in d02_logs)
+    assert any("谷仓仓储" in item for item in d02_logs)
+
+
+def test_china_direct_logistics_variants_skip_oversea():
+    cfg = _cfg()
+    cases = [
+        "林艺奋-FBM SHIP+云途特快",
+        "林艺奋-AMZ云途首货专线挂号QDX",
+        "美客多线上发货",
+        "MERCADO线上发货",
+        "速卖通线上",
+        "eBay线上",
+        "泰嘉物流",
+        "FBA SHIP-云途特快",
+    ]
+    for logistics in cases:
+        row = _prepare_row(
+            _raw(订单号="C-1", 物流方式=logistics, 拣货备注="", 订单金额=9),
+            cfg, [], None, set(), {"C-1": Decimal("15")}, [],
+        )
+        assert row["skip_oversea"] is True, logistics
+        assert row["china_direct_logistics"] is True, logistics
+        assert row["destination"] == "dian_02", logistics
+        assert _d02_total_amount(row, row["cells"], order_counts={"C-1": 1}, anomalies_out=[], order_no="C-1") == 15.0
+
+
+def test_amazon_fba_warehouse_still_in_oversea():
+    cfg = _cfg()
+    row = _prepare_row(
+        _raw(
+            订单号="AMZ-WH",
+            物流方式="Amazon FBA-亚马逊宜有欧洲-德国站-Expedited-加急配送",
+            运单号="6G62084130219",
+            包裹号="XM68AXJ70552",
+            拣货备注="中国直发M00016 海外仓发产品---亚马逊宜有欧洲（自营）",
+            订单金额=20,
+        ),
+        cfg, [], None, set(), {"AMZ-WH": Decimal("33")}, [],
+    )
+    assert row["skip_oversea"] is False
+    assert row["china_direct_logistics"] is False
+    assert row["cells"]["运单号"] == "XM68AXJ70552"
+    assert float(row["cells"]["订单金额"]) == 20
+    assert "Amazon" in (row["cells"]["物流方式"] or "")
+
+
+def test_xinyuntu_and_warehouse_split_in_process_orders():
+    cfg = _cfg()
+    tmp = Path("/tmp/p2-xinyuntu-oversea")
+    src_dir = tmp / "in"
+    out_dir = tmp / "out"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    headers = [
+        "下单时间", "付款时间", "订单状态", "店铺账号", "订单号", "买家指定物流", "物流方式", "运单号",
+        "SKU", "产品总数", "客服备注", "订单备注", "拣货备注", "买家账号", "买家Email", "收货人姓名",
+        "详细地址", "收货人城市", "收货人州/省", "邮编", "收货人国家", "收货人电话", "收货人手机",
+        "英文报关名", "中文报关名", "报关重量", "申报单价", "地址1", "地址2", "中文国家名", "包裹号",
+        "订单金额", "币种缩写",
+    ]
+
+    def _write(path, rows):
+        wb = Workbook()
+        ws = wb.active
+        for c, h in enumerate(headers, start=1):
+            ws.cell(1, c, h)
+        for r, vals in enumerate(rows, start=2):
+            for c, h in enumerate(headers, start=1):
+                ws.cell(r, c, vals.get(h, ""))
+        wb.save(path)
+        wb.close()
+
+    note = "中国直发M00016 海外仓发产品---亚马逊香港创趣欧洲（自营）"
+    orders = src_dir / "orders.xlsx"
+    _write(
+        orders,
+        [
+            {
+                "店铺账号": "亚马逊香港创趣欧洲（自营）",
+                "订单号": "303-2768442-9058769-1",
+                "物流方式": "新云途-云途全球专线挂号（特惠普货）",
+                "运单号": "YT123",
+                "SKU": "WX17049",
+                "产品总数": 1,
+                "拣货备注": note,
+                "收货人姓名": "Ada",
+                "收货人国家": "DE",
+                "订单金额": 18.8,
+                "币种缩写": "EUR",
+            },
+            {
+                "店铺账号": "亚马逊香港创趣欧洲（自营）",
+                "订单号": "303-2768442-9058769-1",
+                "物流方式": "谷仓仓储-深圳承恩-捷克仓-CZ_OC_Parcel",
+                "运单号": "GC456",
+                "SKU": "WX17049",
+                "产品总数": 1,
+                "拣货备注": note,
+                "收货人姓名": "Ada",
+                "收货人国家": "DE",
+                "订单金额": 18.8,
+                "币种缩写": "EUR",
+            },
+            {
+                "店铺账号": "亚马逊测试店",
+                "订单号": "AMZ-WH",
+                "物流方式": "Amazon FBA-亚马逊宜有欧洲-德国站-Expedited-加急配送",
+                "运单号": "6G62084130219",
+                "包裹号": "XM68AXJ70552",
+                "SKU": "WX10001",
+                "产品总数": 1,
+                "拣货备注": "",
+                "收货人姓名": "Eve",
+                "收货人国家": "DE",
+                "订单金额": 20,
+                "币种缩写": "EUR",
+            },
+        ],
+    )
+    amounts = src_dir / "amounts.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["订单号", "订单金额"])
+    ws.append(["303-2768442-9058769-1", 42.3])
+    wb.save(amounts)
+    wb.close()
+
+    summary = process_orders([orders], out_dir, config=cfg, same_day_files=[amounts], export_date="2026-11-20")
+    oversea = next(item for item in summary["downloads"] if item["kind"] == "oversea")
+    book = load_workbook(out_dir / oversea["path"])
+    sheet = book.active
+    headers_out = [sheet.cell(1, c).value for c in range(1, sheet.max_column + 1)]
+    idx = {name: i + 1 for i, name in enumerate(headers_out)}
+    oversea_rows = []
+    for r in range(2, sheet.max_row + 1):
+        oversea_rows.append(
+            {
+                "订单号": str(sheet.cell(r, idx["订单号"]).value),
+                "物流方式": str(sheet.cell(r, idx["物流方式"]).value or ""),
+                "订单金额": sheet.cell(r, idx["订单金额"]).value,
+            }
+        )
+    book.close()
+    logistics = [row["物流方式"] for row in oversea_rows]
+    assert any("谷仓仓储-深圳承恩-捷克仓" in item for item in logistics)
+    assert any("Amazon FBA-亚马逊宜有欧洲" in item for item in logistics)
+    assert not any("新云途" in item for item in logistics)
+    barn = next(row for row in oversea_rows if "谷仓仓储" in row["物流方式"])
+    assert barn["订单号"] == "303-2768442-9058769-1"
+    assert float(barn["订单金额"]) == 18.8
+
+    d02 = [item for item in summary["orders"] if item["destination"] == "dian_02"]
+    assert any(item["order_no"] == "303-2768442-9058769-1" for item in d02)
+
+
+
+def test_zhizhan_triple_dash_does_not_overwrite_real_shop():
+    """源表已有真实店名时，拣货备注「分单 制单---运单号」不能把店铺改成运单号。"""
+    cfg = _cfg()
+    raw = _raw(
+        订单号="3077940834066278",
+        店铺账号="亚马逊香港创趣欧洲（自营）",
+        拣货备注="分单 制单---CA36872274TDE",
+        运单号="",
+        物流方式="谷仓仓储-鑫赢科技-捷克仓-DHL德国派送",
+    )
+    row = _prepare_row(raw, cfg, [], None, set(), {}, [])
+    assert row["shop"] == "亚马逊香港创趣欧洲（自营）"
+    assert row["cells"]["店铺账号"] == "亚马逊香港创趣欧洲（自营）"
+    assert row["cells"]["运单号"] == "CA36872274TDE"
+    assert "CA36872274TDE" not in str(row["shop"])
+
+
+def test_zhizhan_double_dash_does_not_overwrite_real_shop():
+    cfg = _cfg()
+    raw = _raw(
+        订单号="3077940834066278",
+        店铺账号="亚马逊香港创趣欧洲（自营）",
+        拣货备注="已制单--CA36872274TDE",
+        运单号="",
+        物流方式="谷仓仓储-鑫赢科技-捷克仓-DHL德国派送",
+    )
+    row = _prepare_row(raw, cfg, [], None, set(), {}, [])
+    assert row["shop"] == "亚马逊香港创趣欧洲（自营）"
+    assert row["cells"]["运单号"] == "CA36872274TDE"
+
+
+def test_manual_and_non_manual_china_direct_dash_shop_still_works():
+    """手工订单 / 已有店名：中国直发---店名 的抽店行为不回归。"""
+    shop, _ = _resolve_manual(
+        _manual_cells(
+            订单号="X-DASH2",
+            拣货备注="中国直发M00016 海外仓发产品---亚马逊香港创趣欧洲（自营）",
+        )
+    )
+    assert shop == "亚马逊香港创趣欧洲（自营）"
+    cfg = _cfg()
+    raw = _raw(
+        订单号="X-DASH3",
+        店铺账号="亚马逊测试店",
+        拣货备注="中国直发M00016 海外仓发产品---亚马逊香港创趣欧洲（自营）",
+    )
+    row = _prepare_row(raw, cfg, [], None, set(), {}, [])
+    assert row["shop"] == "亚马逊香港创趣欧洲（自营）"
 
 
 
